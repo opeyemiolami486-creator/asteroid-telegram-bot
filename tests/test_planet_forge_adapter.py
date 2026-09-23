@@ -73,6 +73,12 @@ def test_state_accepts_dictionary_wrapped_numeric_values():
     assert state.resources == {"iron": 87}
 
 
+def test_payload_marks_level_complete_accepts_live_completion_shapes():
+    assert PlanetForgeAdapter._payload_marks_level_complete({"levelComplete": True})
+    assert PlanetForgeAdapter._payload_marks_level_complete({"status": "succeeded"})
+    assert not PlanetForgeAdapter._payload_marks_level_complete({"status": "running"})
+
+
 def test_repair_error_extracts_remaining_seconds_from_json():
     assert PlanetForgeAdapter._repair_remaining_seconds('{"error":"ship is in repairs", "remainingSeconds": 125}') == 125
 

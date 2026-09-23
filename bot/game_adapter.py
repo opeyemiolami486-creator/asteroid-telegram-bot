@@ -309,13 +309,37 @@ class PlanetForgeAdapter(GameAdapter):
         run_id = str(run.get("runId") or "")
         if not run_id:
             raise RuntimeError("Planet Forge startRun did not return runId")
-        self._runs[user.telegram_user_id] = {"run_id": run_id, "heartbeat_token": run.get("heartbeatToken"), "level_id": level.get("id"), "ship_inv_id": ship.get("id"), "started_at": time.monotonic(), "duration": float(level.get("durationSec", 90)), "kills": 0, "inputs": 0, "last_heartbeat": 0.0, "completed": False}
+        duration = self._number(
+            level.get("durationSec", level.get("durationSeconds", level.get("duration", 90))),
+            90.0,
+        )
+        if duration > 1_000:
+            duration /= 1_000.0
+        self._runs[user.telegram_user_id] = {"run_id": run_id, "heartbeat_token": run.get("heartbeatToken"), "level_id": level.get("id"), "ship_inv_id": ship.get("id"), "started_at": time.monotonic(), "duration": max(1.0, duration), "kills": 0, "inputs": 0, "last_heartbeat": 0.0, "completed": False}
         return run_id
+
+    @staticmethod
+    def _payload_marks_level_complete(payload: dict) -> bool:
+        """Recognize completion flags used by different Planet Forge builds."""
+        data = payload.get("state", payload)
+        if not isinstance(data, dict):
+            return False
+        for key in (
+            "game_over", "gameOver", "levelComplete", "levelCompleted",
+            "runComplete", "runCompleted", "completed",
+        ):
+            if data.get(key) is True:
+                return True
+        status = str(data.get("status", data.get("result", ""))).strip().lower()
+        return status in {"complete", "completed", "success", "succeeded", "victory", "won"}
 
     async def read_state(self, user: UserState) -> GameState:
         payload = await self._invoke("playerState", user)
         run = self._runs.get(user.telegram_user_id)
-        if run and not run["completed"] and time.monotonic() - run["started_at"] >= run["duration"]:
+        if run and not run["completed"] and (
+            time.monotonic() - run["started_at"] >= run["duration"]
+            or self._payload_marks_level_complete(payload)
+        ):
             try:
                 await self._complete(user, run, survived=True)
             except PlanetForgePreviewBranchMissingError:

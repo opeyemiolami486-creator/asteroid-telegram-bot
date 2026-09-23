@@ -96,6 +96,13 @@ class GameController:
                     if next_session:
                         user.session_id = next_session
                         user.last_game = GameState()
+                        # The page that completed the previous run remains on
+                        # its completion screen. Force the browser worker to
+                        # create a fresh authenticated page for the new run;
+                        # otherwise the controller advances server-side while
+                        # the canvas keeps displaying the old level.
+                        if self.canvas_worker is not None:
+                            await self.canvas_worker.close(user)
                         self.store.put(user)
                         await self.notify(user.telegram_user_id, f"{summary}; entering next sector")
                         await asyncio.sleep(1)
