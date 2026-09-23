@@ -51,6 +51,38 @@ def test_state_maps_live_player_state_inventory_and_xp():
     assert state.ship == "ship-blueprint"
 
 
+def test_state_applies_reported_cooldown_reduction():
+    state = PlanetForgeAdapter._state({
+        "cooldown_seconds": 4,
+        "cooldownReduction": 1.5,
+    })
+    assert state.cooldown_seconds == 2.5
+
+
+def test_state_accepts_dictionary_wrapped_numeric_values():
+    state = PlanetForgeAdapter._state({
+        "score": {"value": 1234},
+        "rank": {"level": 4},
+        "cooldown_seconds": {"seconds": 3},
+        "inventory": [{"itemKind": "material", "itemId": "iron", "quantity": {"amount": 87}}],
+    })
+    assert state.score == 1234
+    assert state.rank == 4
+    assert state.cooldown_seconds == 3
+    assert state.resources == {"iron": 87}
+
+
+def test_economy_plan_prefers_cooldown_reduction_when_cost_is_affordable():
+    plan = PlanetForgeAdapter.economy_plan(
+        {"inventory": [{"itemKind": "material", "itemId": "iron", "quantity": 500}]},
+        {"ships": [
+            {"id": "cheap", "name": "Cheap", "materialCost": {"iron": 10}, "cooldownReduction": 0.1},
+            {"id": "quick", "name": "Quick", "materialCost": {"iron": {"amount": 100}}, "cooldownReduction": 1.0},
+        ]},
+    )
+    assert plan["itemId"] == "quick"
+
+
 @pytest.mark.asyncio
 async def test_restart_chooses_highest_normal_level_unlocked_by_xp(adapter, monkeypatch):
     user = UserState(1, Wallet(adapter.signer.address, "00" * 32))

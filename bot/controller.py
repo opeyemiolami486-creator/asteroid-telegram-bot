@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from .game_adapter import GameAdapter
+from .game_adapter import GameAdapter, PlanetForgeShipRepairError
 from .models import GameState, UserState
 from .store import StateStore
 
@@ -28,8 +28,8 @@ class GameController:
     async def start(self, user: UserState) -> None:
         if user.running:
             return
-        if not user.session_id:
-            await self.prepare(user)
+        if not user.play_code:
+            user.play_code = await self.adapter.request_play_code(user)
         user.running = True
         self.store.put(user)
         self.tasks[user.telegram_user_id] = asyncio.create_task(self._run(user))
@@ -43,14 +43,36 @@ class GameController:
         self.store.put(user)
 
     async def _run(self, user: UserState) -> None:
+        waiting_for_repairs = False
         try:
             while user.running:
+                if not user.session_id:
+                    try:
+                        user.session_id = await self.adapter.start_session(user, user.play_code or "")
+                        self.store.put(user)
+                        if waiting_for_repairs:
+                            await self.notify(user.telegram_user_id, "Ship repairs complete; resuming the game")
+                            waiting_for_repairs = False
+                    except PlanetForgeShipRepairError:
+                        if not waiting_for_repairs:
+                            await self.notify(user.telegram_user_id, "Ship is in repairs; waiting and will resume automatically when ready")
+                            waiting_for_repairs = True
+                        await asyncio.sleep(max(self.poll_seconds, 5.0))
+                        continue
                 state = await self.adapter.read_state(user)
                 user.last_game = state
                 self.store.put(user)
                 if state.game_over or not state.alive:
                     summary = self._summary(user, "sector complete")
-                    next_session = await self.adapter.restart_session(user)
+                    try:
+                        next_session = await self.adapter.restart_session(user)
+                    except PlanetForgeShipRepairError:
+                        user.session_id = None
+                        if not waiting_for_repairs:
+                            await self.notify(user.telegram_user_id, "Ship is in repairs; waiting before the next sector")
+                            waiting_for_repairs = True
+                        await asyncio.sleep(max(self.poll_seconds, 5.0))
+                        continue
                     if next_session:
                         user.session_id = next_session
                         user.last_game = GameState()
@@ -72,7 +94,9 @@ class GameController:
                 user.last_game = state
                 self.store.put(user)
                 await self.notify(user.telegram_user_id, self._summary(user, "tick"))
-                await asyncio.sleep(max(self.poll_seconds, state.cooldown_seconds))
+                # The server enforces the action cooldown; polling at the normal
+                # interval avoids adding a second full cooldown delay locally.
+                await asyncio.sleep(self.poll_seconds)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

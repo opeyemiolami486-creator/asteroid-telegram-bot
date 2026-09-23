@@ -52,6 +52,10 @@ class PlanetForgeInvalidRunError(RuntimeError):
     """Raised when Planet Forge has expired or invalidated the active run."""
 
 
+class PlanetForgeShipRepairError(RuntimeError):
+    """Raised when the equipped ship cannot start a run while being repaired."""
+
+
 def normalize_target(value: str) -> str:
     target = value.strip()
     if target.lower() in {"demo", "local", "offline"}:
@@ -66,6 +70,25 @@ def normalize_target(value: str) -> str:
 
 class PlanetForgeAdapter(GameAdapter):
     """Client for Planet Forge's authenticated Base44 function contract."""
+
+    @staticmethod
+    def _number(value: object, default: float = 0.0) -> float:
+        """Coerce scalar or common API wrapper values without crashing a tick."""
+        if isinstance(value, dict):
+            for key in ("value", "amount", "quantity", "count", "seconds", "xp", "level"):
+                if key in value:
+                    return PlanetForgeAdapter._number(value[key], default)
+            return default
+        if value is None or isinstance(value, bool):
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def _integer(cls, value: object, default: int = 0) -> int:
+        return int(cls._number(value, default))
 
     def __init__(self, base_url: str, signer: SolanaSigner, app_id: str = "6a845b273cbe45715e037048", timeout_seconds: float = 15.0) -> None:
         self.base_url = normalize_target(base_url)
@@ -96,6 +119,10 @@ class PlanetForgeAdapter(GameAdapter):
             if exc.response.status_code == 403 and "invalid run" in body.lower():
                 raise PlanetForgeInvalidRunError(
                     "Planet Forge run is no longer valid; starting a fresh run"
+                ) from exc
+            if exc.response.status_code == 403 and "ship is in repairs" in body.lower():
+                raise PlanetForgeShipRepairError(
+                    "Planet Forge ship is in repairs; waiting for it to be ready"
                 ) from exc
             raise RuntimeError(f"Planet Forge {function} returned HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
@@ -145,16 +172,26 @@ class PlanetForgeAdapter(GameAdapter):
         resources = dict(resources)
         for item in inventory:
             if isinstance(item, dict) and item.get("itemKind") == "material" and item.get("itemId"):
-                resources[str(item["itemId"])] = int(item.get("quantity", 0) or 0)
-        xp = int(data.get("score", data.get("xp", player.get("xp", 0))) or 0)
+                resources[str(item["itemId"])] = PlanetForgeAdapter._integer(item.get("quantity", 0))
+        xp = PlanetForgeAdapter._integer(data.get("score", data.get("xp", player.get("xp", 0))))
         player_level = player.get("level", player.get("rank"))
-        rank = int(data.get("rank", player_level if player_level is not None else player.get("sectorClears", 0)) or 0)
+        rank = PlanetForgeAdapter._integer(data.get("rank", player_level if player_level is not None else player.get("sectorClears", 0)))
         equipped_id = player.get("equippedShipId")
         equipped = next((item for item in inventory if isinstance(item, dict) and item.get("itemKind") == "ship" and item.get("itemId") == equipped_id), None)
         ship = data.get("ship") or (equipped or {}).get("itemId") or equipped_id or "unknown"
         upgrades = data.get("upgrades") or player.get("upgrades") or {}
         if not isinstance(upgrades, dict):
             upgrades = {}
+        cooldown = PlanetForgeAdapter._number(data.get("cooldown_seconds", data.get("cooldownSeconds", 0.0)))
+        reduction = data.get("cooldown_reduction", data.get("cooldownReduction"))
+        if reduction is None and isinstance(player, dict):
+            reduction = player.get("cooldown_reduction", player.get("cooldownReduction"))
+        if reduction is None:
+            reduction = upgrades.get("cooldown_reduction", upgrades.get("cooldownReduction", 0.0))
+        try:
+            cooldown = max(0.0, cooldown - PlanetForgeAdapter._number(reduction))
+        except (TypeError, ValueError):
+            cooldown = max(0.0, cooldown)
         excluded = {"player", "inventory", "score", "resources", "materials", "position", "ship", "rank", "upgrades", "cooldown_seconds", "dead", "game_over"}
         return GameState(
             score=xp,
@@ -163,7 +200,7 @@ class PlanetForgeAdapter(GameAdapter):
             ship=str(ship),
             rank=rank,
             upgrades=dict(upgrades),
-            cooldown_seconds=float(data.get("cooldown_seconds", 0.0)),
+            cooldown_seconds=cooldown,
             alive=not bool(data.get("dead", False)),
             game_over=bool(data.get("game_over", False)),
             raw={"player": player, "inventory": inventory, **{key: value for key, value in data.items() if key not in excluded}},
@@ -179,15 +216,15 @@ class PlanetForgeAdapter(GameAdapter):
         levels = catalog.get("levels", [])
         if not levels:
             raise RuntimeError("Planet Forge catalog has no playable levels")
-        xp = int((state.get("player") or {}).get("xp", 0)) if isinstance(state.get("player"), dict) else 0
+        xp = self._integer((state.get("player") or {}).get("xp", 0)) if isinstance(state.get("player"), dict) else 0
         unlocked = [
             item for item in levels
             if isinstance(item, dict)
             and not item.get("locked")
             and str(item.get("name", "")).strip().lower() != "nephelis"
-            and int(item.get("xpRequired", 0) or 0) <= xp
+            and self._integer(item.get("xpRequired", 0)) <= xp
         ]
-        level = max(unlocked or levels, key=lambda item: int(item.get("order", 0) or 0))
+        level = max(unlocked or levels, key=lambda item: self._integer(item.get("order", 0)))
         inventory = state.get("inventory", [])
         ships = [item for item in inventory if isinstance(item, dict) and item.get("itemKind") == "ship"]
         player = state.get("player", {}) if isinstance(state.get("player", {}), dict) else {}
@@ -253,7 +290,16 @@ class PlanetForgeAdapter(GameAdapter):
 
     @staticmethod
     def _materials(inventory: list[dict]) -> dict[str, int]:
-        return {str(item.get("itemId")): int(item.get("quantity", 0) or 0) for item in inventory if item.get("itemKind") == "material"}
+        return {str(item.get("itemId")): PlanetForgeAdapter._integer(item.get("quantity", 0)) for item in inventory if item.get("itemKind") == "material"}
+
+    @staticmethod
+    def _cooldown_reduction(ship: dict) -> float:
+        stats = ship.get("stats", {}) if isinstance(ship.get("stats", {}), dict) else {}
+        value = ship.get("cooldownReduction", ship.get("cooldown_reduction", stats.get("cooldownReduction", stats.get("cooldown_reduction", 0))))
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
     @classmethod
     def economy_plan(cls, state: dict, catalog: dict) -> dict:
@@ -272,14 +318,14 @@ class PlanetForgeAdapter(GameAdapter):
             cost = ship.get("materialCost", {}) or {}
             if (ship.get("id"), "standard") in owned:
                 continue
-            affordable = all(materials.get(str(key), 0) >= int(value or 0) for key, value in cost.items())
-            candidates.append((sum(int(value or 0) for value in cost.values()), ship, affordable))
+            affordable = all(materials.get(str(key), 0) >= cls._integer(value) for key, value in cost.items())
+            candidates.append((sum(cls._integer(value) for value in cost.values()), ship, affordable))
         affordable = [entry for entry in candidates if entry[2]]
         if affordable:
-            _, ship, _ = min(affordable, key=lambda entry: entry[0])
+            _, ship, _ = min(affordable, key=lambda entry: (-cls._cooldown_reduction(entry[1]), entry[0]))
             return {"kind": "craft", "itemKind": "ship", "itemId": ship.get("id"), "shipVariant": "standard", "name": ship.get("name", ship.get("id"))}
         if candidates:
-            _, ship, _ = min(candidates, key=lambda entry: entry[0])
+            _, ship, _ = min(candidates, key=lambda entry: (-cls._cooldown_reduction(entry[1]), entry[0]))
             return {"kind": "buy", "itemKind": "ship", "itemId": ship.get("id"), "shipVariant": "standard", "name": ship.get("name", ship.get("id"))}
         return {"kind": "none"}
 
