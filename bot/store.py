@@ -25,6 +25,7 @@ class StateStore:
             self.users[int(raw["telegram_user_id"])] = UserState(
                 telegram_user_id=int(raw["telegram_user_id"]),
                 wallet=wallet,
+                target_url=raw.get("target_url"),
                 play_code=raw.get("play_code"),
                 session_id=raw.get("session_id"),
                 running=False,

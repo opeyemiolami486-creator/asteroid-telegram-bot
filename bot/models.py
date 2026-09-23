@@ -30,6 +30,7 @@ class GameState:
 class UserState:
     telegram_user_id: int
     wallet: Wallet
+    target_url: str | None = None
     play_code: str | None = None
     session_id: str | None = None
     running: bool = False
