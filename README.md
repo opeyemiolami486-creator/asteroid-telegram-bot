@@ -39,7 +39,10 @@ The page never sends the generated secret key to this bot, a server, or PlanetFo
 ## Tests
 
 ```bash
-pytest -q
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q
 ```
 
-The tests cover the conservative controller policy and the demo adapter's mining and forging behavior.
+The tests cover the conservative controller policy and the demo adapter's mining and forging behavior. GitHub Actions runs the same tests, plus Python and browser JavaScript syntax checks and required static-site file checks.
