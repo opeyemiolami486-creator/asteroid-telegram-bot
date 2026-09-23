@@ -26,6 +26,7 @@ class StateStore:
                 telegram_user_id=int(raw["telegram_user_id"]),
                 wallet=wallet,
                 target_url=raw.get("target_url"),
+                game_username=raw.get("game_username"),
                 play_code=raw.get("play_code"),
                 session_id=raw.get("session_id"),
                 running=False,

@@ -10,7 +10,8 @@ The bot includes a `StonkScapeBridgeAdapter` with a small JSON contract. An orga
 
 ## Telegram commands
 
-- `/start` — request or reuse the user's unique play code and initialize a session.
+- `/login <game_username> <game_password>` — authenticate an Existing User account in a private chat.
+- `/start` — request or reuse the user's unique play code and initialize a session after login.
 - `/play` — start the autonomous loop.
 - `/stop` — cancel the user's loop safely.
 - `/status` — show score, resources, ship, rank, upgrades, and target.
@@ -32,6 +33,8 @@ python -m bot
 
 The default `GAME_MODE=demo` works without a game account or external service. It is the safest way to demonstrate the complete `/start` → `/play` → `/status` → `/stop` flow.
 
+In StonkScape mode, the flow mirrors the reference client's visible **Existing User** path: send `/login username password` in a private Telegram chat, then `/start` to obtain a unique play code, then `/play` to begin autonomous play. The bot attempts to delete the login message, sends the password only to the authorized bridge, and discards it immediately after authentication; it is not echoed, logged, or written to `data/state.json`. Use a private chat because Telegram command messages are visible to the chat participants.
+
 ## Authorized StonkScape bridge mode
 
 Set these variables only when the hackathon organizer provides an authorized bridge:
@@ -49,6 +52,7 @@ The bridge contract is:
 
 | Request | JSON body or query | Response |
 |---|---|---|
+| `POST /login` | `telegram_user_id`, `reference_url`, `username`, `password` | `{ "authenticated": true }` |
 | `POST /play-code` | `telegram_user_id`, `reference_url` | `{ "play_code": "..." }` |
 | `POST /session` | above plus `play_code` | `{ "session_id": "..." }` |
 | `GET /state` | above plus `play_code`, `session_id` | `GameState` or `{ "state": GameState }` |

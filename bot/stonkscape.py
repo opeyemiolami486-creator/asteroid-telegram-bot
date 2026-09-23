@@ -38,6 +38,17 @@ class StonkScapeBridgeAdapter(GameAdapter):
         self.bridge_url = bridge_url.rstrip("/")
         self.reference_url = reference_url.rstrip("/")
         self.timeout = timeout
+        self._authenticated: set[int] = set()
+
+    async def login(self, user: UserState, username: str, password: str) -> None:
+        if not username.strip() or not password:
+            raise ValueError("game username and password are required")
+        await self._request("POST", "/login", user, username=username.strip(), password=password)
+        # The password is not retained after the bridge accepts it. Only an
+        # in-memory authenticated marker remains; no password reaches state,
+        # logs, or Telegram replies.
+        self._authenticated.add(user.telegram_user_id)
+        user.game_username = username.strip()
 
     async def _request(self, method: str, path: str, user: UserState, **payload: Any) -> dict[str, Any]:
         body = {"telegram_user_id": user.telegram_user_id, "reference_url": self.reference_url, **payload}
@@ -76,6 +87,8 @@ class StonkScapeBridgeAdapter(GameAdapter):
         )
 
     async def request_play_code(self, user: UserState) -> str:
+        if user.telegram_user_id not in self._authenticated:
+            raise RuntimeError("Log in first with /login <game_username> <game_password>")
         result = await self._request("POST", "/play-code", user)
         code = str(result.get("play_code", "")).strip()
         if not code:

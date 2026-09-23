@@ -15,6 +15,10 @@ from .wallet import SolanaSigner
 
 
 class GameAdapter(ABC):
+    async def login(self, user: UserState, username: str, password: str) -> None:
+        """Authenticate when the target requires a game account."""
+        return None
+
     @abstractmethod
     async def request_play_code(self, user: UserState) -> str:
         raise NotImplementedError
@@ -380,6 +384,9 @@ class SelectableGameAdapter(GameAdapter):
 
     async def request_play_code(self, user: UserState) -> str:
         return await self._adapter(user).request_play_code(user)
+
+    async def login(self, user: UserState, username: str, password: str) -> None:
+        await self._adapter(user).login(user, username, password)
 
     async def start_session(self, user: UserState, play_code: str) -> str:
         return await self._adapter(user).start_session(user, play_code)

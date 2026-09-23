@@ -75,7 +75,6 @@ def build_app() -> Application:
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = get_user(update)
-        wallet = user.wallet
         try:
             if not user.play_code:
                 play_code = await controller.prepare(user)
@@ -89,6 +88,37 @@ def build_app() -> Application:
             )
         except Exception as exc:
             await update.message.reply_text(f"Could not initialize target {user.target_url or default_target}: {exc}")
+
+    async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user = get_user(update)
+        if settings.game_mode.lower() != "stonkscape":
+            await update.message.reply_text("The offline demo does not need a game login.")
+            return
+        if len(context.args) != 2:
+            await update.message.reply_text(
+                "StonkScape uses its Existing User login.\n"
+                "Send /login <game_username> <game_password> in a private chat.\n"
+                "The bot will not echo or persist your password."
+            )
+            return
+        username, password = context.args
+        try:
+            await update.message.delete()
+        except Exception:
+            # Deletion depends on Telegram chat permissions; the private-chat
+            # warning remains the primary protection against credential exposure.
+            pass
+        try:
+            await adapter.login(user, username, password)
+            user.play_code = None
+            user.session_id = None
+            store.put(user)
+            await update.message.reply_text(
+                f"Logged in to StonkScape as {user.game_username}.\n"
+                "Run /start to request a unique play code, then /play."
+            )
+        except Exception as exc:
+            await update.message.reply_text(f"StonkScape login failed: {exc}")
 
     async def target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = get_user(update)
@@ -138,6 +168,7 @@ def build_app() -> Application:
         )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("login", login))
     app.add_handler(CommandHandler("target", target))
     app.add_handler(CommandHandler("play", play))
     app.add_handler(CommandHandler("stop", stop))
