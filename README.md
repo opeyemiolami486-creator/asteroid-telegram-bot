@@ -30,6 +30,12 @@ Set `GAME_MODE=demo` (the default) for judging and local demos. The deterministi
 
 The controller uses an explicit state/action model: request a play code, start a session, read state, submit one legal action, and upgrade when resources permit. Set another mode only when an isolated, authorized test harness has supplied a documented contract; the `ReferenceSiteAdapter` remains a fail-closed boundary and will not infer undocumented endpoints.
 
+## `/site` wallet companion
+
+The `site/` directory is a static, browser-only companion for the judges' PlanetForge flow. Serve it locally with `python3 -m http.server 8000 --directory site`, then open `http://localhost:8000`. It can generate a Solana keypair locally, display its public address, export a JSON backup after the user explicitly requests it, and connect installed Phantom, Solflare, or Backpack providers. The page then links to [PlanetForge](https://planet-forge.com) for the user to continue manually.
+
+The page never sends the generated secret key to this bot, a server, or PlanetForge. Provider connection and all mainnet transaction approvals remain in the user's wallet extension. Users are responsible for backing up the exported key and must never share it in Telegram, GitHub, screenshots, or chat.
+
 ## Tests
 
 ```bash

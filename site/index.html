@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="PlanetForge wallet companion — create and connect a Solana wallet locally in your browser." />
+    <title>Forge Portal · PlanetForge Wallet</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <nav class="topbar">
+        <a class="brand" href="./" aria-label="Forge Portal home"><span class="brand-mark">✦</span> FORGE PORTAL</a>
+        <span class="network"><span class="pulse"></span> SOLANA MAINNET</span>
+      </nav>
+
+      <section class="hero">
+        <div class="eyebrow">PLANETFORGE // ACCESS LAYER</div>
+        <h1>Bring a wallet.<br /><em>Unlock the forge.</em></h1>
+        <p class="lede">Create a Solana wallet locally in this browser, connect an installed wallet provider, and enter the asteroid field. Your secret key never leaves this page.</p>
+      </section>
+
+      <section class="grid" aria-label="Wallet actions">
+        <article class="card generated-card">
+          <div class="card-kicker"><span class="step">01</span> LOCAL WALLET</div>
+          <h2>Generate a wallet</h2>
+          <p>A fresh keypair is created on-device using the Solana Web3 library. Nothing is sent to Telegram, a server, or PlanetForge.</p>
+          <button id="generate" class="button button-primary">Generate wallet <span>↗</span></button>
+          <div id="generated-panel" class="wallet-panel hidden" aria-live="polite">
+            <label for="generated-address">PUBLIC ADDRESS</label>
+            <div class="address-row"><code id="generated-address">—</code><button id="copy-address" class="icon-button" title="Copy public address">COPY</button></div>
+            <div class="warning"><strong>BACK UP BEFORE LEAVING</strong><br />The secret key is held only in this tab. Export it once, store it offline, and never paste it into chat.</div>
+            <button id="export-wallet" class="button button-secondary">Export backup JSON <span>↓</span></button>
+            <button id="reveal-key" class="text-button">Show secret key</button>
+            <div id="secret-panel" class="secret-panel hidden"><code id="secret-key"></code><p>Anyone with this key can control the wallet. Do not share it.</p></div>
+          </div>
+        </article>
+
+        <article class="card connect-card">
+          <div class="card-kicker"><span class="step">02</span> PROVIDER ACCESS</div>
+          <h2>Connect a wallet</h2>
+          <p>Use Phantom, Solflare, or Backpack to connect through your installed wallet extension. The provider controls all approvals.</p>
+          <div class="provider-buttons">
+            <button id="phantom" class="provider"><span class="provider-icon phantom-icon">◈</span><span>Phantom</span><span class="arrow">↗</span></button>
+            <button id="solflare" class="provider"><span class="provider-icon solflare-icon">✺</span><span>Solflare</span><span class="arrow">↗</span></button>
+            <button id="backpack" class="provider"><span class="provider-icon backpack-icon">▣</span><span>Backpack</span><span class="arrow">↗</span></button>
+          </div>
+          <div id="connection-status" class="status" aria-live="polite"><span class="status-dot"></span><span>NO WALLET CONNECTED</span></div>
+          <div id="connected-address" class="connected-address hidden"></div>
+        </article>
+      </section>
+
+      <section class="launch-panel">
+        <div><div class="card-kicker">03 // ENTER THE FIELD</div><h2>Ready to play?</h2><p>PlanetForge is the asteroid-field shooter where you shatter rocks, harvest ore, and forge new ships.</p></div>
+        <a class="button button-launch" href="https://planet-forge.com" target="_blank" rel="noopener noreferrer">Open PlanetForge <span>↗</span></a>
+      </section>
+
+      <footer><span>FORGE PORTAL / HACKATHON BUILD</span><span>NON-CUSTODIAL BY DESIGN</span></footer>
+    </main>
+    <div id="toast" class="toast" role="status"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
