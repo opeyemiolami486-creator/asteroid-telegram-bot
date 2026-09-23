@@ -1,10 +1,10 @@
 # Asteroid Telegram Bot
 
-Private hackathon scaffold for a Telegram-controlled asteroid game runner. The bot creates a per-user local wallet record, requests a unique play code through a game adapter, and reports run statistics after each play. The adapter is intentionally unimplemented until the supplied fake reference website and its request/response flow are inspected.
+Public hackathon scaffold for a Telegram-controlled asteroid game runner. The bot creates a per-user local wallet record, requests a unique play code through a game adapter, and reports run statistics after each play. The adapter is intentionally unimplemented until an isolated, authorized test harness and its request/response flow are supplied.
 
 ## Safety and scope
 
-This repository is for the stated fake hackathon test site only. Do not point it at a real game, exchange, wallet, or account without explicit authorization. Never commit `.env`, generated state, session cookies, private keys, or Telegram tokens. The generated wallet secret is stored locally only and is shown once in `/start`; replace the local wallet provider with the hackathon's documented wallet format before using it for login.
+This repository must only be used against an isolated, authorized hackathon test harness. Do not point it at `planet-forge.com` or any real game, exchange, wallet, or account: its public tutorial describes real Solana wallet signing, SOL forge fees, server-side reward controls, and detection or suspension of scripted play. Never commit `.env`, generated state, session cookies, private keys, or Telegram tokens. The generated wallet secret is stored locally only and is shown once in `/start`; replace the local wallet provider with the test harness's documented wallet format before using it for login.
 
 ## Commands
 
@@ -34,4 +34,4 @@ python -m bot
 4. submit one legal action;
 5. perform an upgrade when resources and cooldown permit.
 
-The controller uses an explicit state/action model and will not infer undocumented endpoints. Once the reference URL is provided, capture its fake API or browser flow, implement the adapter, add fixture tests, and run an authorized end-to-end smoke test.
+The controller uses an explicit state/action model and will not infer undocumented endpoints. Once an isolated test URL or local API fixture is provided, capture that fake API or browser flow, implement the adapter, add fixture tests, and run an authorized end-to-end smoke test. The current public PlanetForge URL is documentation only and is not an implementation target.
