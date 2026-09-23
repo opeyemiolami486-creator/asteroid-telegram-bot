@@ -32,7 +32,7 @@ python -m bot
 
 Set `GAME_MODE=external`, `GAME_BASE_URL=https://planet-forge.com`, and `SOLANA_PRIVATE_KEY` in `.env`. The adapter mirrors the reference browser client: `authNonce` → local Ed25519 signature → `authVerify`, then authenticated `playerState`, `catalog`, `startRun`, `runHeartbeat`, and `completeLevel` function calls at `/api/apps/6a845b273cbe45715e037048/functions/<name>`. Optional `equipItem` and `craftItem` helpers use the same authenticated function client. There are deliberately no `/api/play-code`, `/api/session`, `/api/state`, or `/api/action` calls.
 
-The bot chooses the first unlocked catalog level and the player's equipped/first ship, sends heartbeat input counts while its conservative rotate-and-shoot policy runs, and submits the mission result after the level duration. A user can override the target with `/target <absolute-http(s)-url>` when testing an equivalent isolated reference harness.
+The bot selects the highest normal sector unlocked by XP, sends browser-compatible 30-second heartbeat input counts while its rotate-and-shoot policy runs, confirms the mission result, and automatically enters the next sector. It keeps doing this until `/stop`. Every 30 seconds it also evaluates materials and ship progression. When a craft is affordable it obtains a quote; when a better ship is not craftable it reports a buy recommendation. It does **not** silently submit a Solana payment transaction from the pilot wallet.
 
 ## `/site` wallet companion
 

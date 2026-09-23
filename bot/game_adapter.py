@@ -35,6 +35,14 @@ class GameAdapter(ABC):
     async def upgrade(self, user: UserState) -> GameState:
         raise NotImplementedError
 
+    async def restart_session(self, user: UserState) -> str | None:
+        """Start the next run after a completed mission, if supported."""
+        return None
+
+    async def maintain(self, user: UserState) -> str | None:
+        """Inspect long-lived progression and optionally perform safe maintenance."""
+        return None
+
 
 def normalize_target(value: str) -> str:
     target = value.strip()
@@ -61,6 +69,7 @@ class PlanetForgeAdapter(GameAdapter):
         self.token: str | None = None
         self.anonymous_id = str(uuid.uuid4())
         self._runs: dict[int, dict] = {}
+        self._last_maintenance: dict[int, float] = {}
 
     def _url(self, function: str) -> str:
         return f"{self.base_url}/api/apps/{self.app_id}/functions/{function}"
@@ -141,7 +150,15 @@ class PlanetForgeAdapter(GameAdapter):
         levels = catalog.get("levels", [])
         if not levels:
             raise RuntimeError("Planet Forge catalog has no playable levels")
-        level = next((item for item in levels if isinstance(item, dict) and not item.get("locked")), levels[0])
+        xp = int((state.get("player") or {}).get("xp", 0)) if isinstance(state.get("player"), dict) else 0
+        unlocked = [
+            item for item in levels
+            if isinstance(item, dict)
+            and not item.get("locked")
+            and str(item.get("name", "")).strip().lower() != "nephelis"
+            and int(item.get("xpRequired", 0) or 0) <= xp
+        ]
+        level = max(unlocked or levels, key=lambda item: int(item.get("order", 0) or 0))
         inventory = state.get("inventory", [])
         ships = [item for item in inventory if isinstance(item, dict) and item.get("itemKind") == "ship"]
         player = state.get("player", {}) if isinstance(state.get("player", {}), dict) else {}
@@ -152,7 +169,7 @@ class PlanetForgeAdapter(GameAdapter):
         run_id = str(run.get("runId") or "")
         if not run_id:
             raise RuntimeError("Planet Forge startRun did not return runId")
-        self._runs[user.telegram_user_id] = {"run_id": run_id, "heartbeat_token": run.get("heartbeatToken"), "level_id": level.get("id"), "ship_inv_id": ship.get("id"), "started_at": time.monotonic(), "duration": float(level.get("durationSec", 90)), "kills": 0, "inputs": 0, "completed": False}
+        self._runs[user.telegram_user_id] = {"run_id": run_id, "heartbeat_token": run.get("heartbeatToken"), "level_id": level.get("id"), "ship_inv_id": ship.get("id"), "started_at": time.monotonic(), "duration": float(level.get("durationSec", 90)), "kills": 0, "inputs": 0, "last_heartbeat": 0.0, "completed": False}
         return run_id
 
     async def read_state(self, user: UserState) -> GameState:
@@ -171,7 +188,10 @@ class PlanetForgeAdapter(GameAdapter):
             run["inputs"] += 1
         if action == "fire":
             run["kills"] += 1
-        await self._invoke("runHeartbeat", user, runId=run["run_id"], heartbeatToken=run["heartbeat_token"], kills=run["kills"], inputs=run["inputs"])
+        now = time.monotonic()
+        if now - run["last_heartbeat"] >= 30:
+            await self._invoke("runHeartbeat", user, runId=run["run_id"], heartbeatToken=run["heartbeat_token"], kills=run["kills"], inputs=run["inputs"])
+            run["last_heartbeat"] = now
         return await self.read_state(user)
 
     async def _complete(self, user: UserState, run: dict, survived: bool) -> dict:
@@ -185,11 +205,62 @@ class PlanetForgeAdapter(GameAdapter):
     async def upgrade(self, user: UserState) -> GameState:
         return await self.read_state(user)
 
+    async def restart_session(self, user: UserState) -> str | None:
+        return await self.start_session(user, user.play_code or "")
+
     async def equip_item(self, user: UserState, **args: object) -> dict:
         return await self._invoke("equipItem", user, **args)
 
     async def craft_item(self, user: UserState, **args: object) -> dict:
         return await self._invoke("craftItem", user, **args)
+
+    @staticmethod
+    def _materials(inventory: list[dict]) -> dict[str, int]:
+        return {str(item.get("itemId")): int(item.get("quantity", 0) or 0) for item in inventory if item.get("itemKind") == "material"}
+
+    @classmethod
+    def economy_plan(cls, state: dict, catalog: dict) -> dict:
+        """Choose the next progression target without spending funds.
+
+        Planet Forge purchases require a separate on-chain SOL payment. The
+        planner therefore only proposes a craft/upgrade/market action here;
+        it never silently spends SOL from the pilot wallet.
+        """
+        inventory = state.get("inventory", []) if isinstance(state.get("inventory", []), list) else []
+        owned = {(item.get("itemId"), item.get("shipVariant", "standard")) for item in inventory if item.get("itemKind") == "ship"}
+        materials = cls._materials(inventory)
+        ships = [item for item in catalog.get("ships", []) if isinstance(item, dict) and item.get("craftable") is not False]
+        candidates = []
+        for ship in ships:
+            cost = ship.get("materialCost", {}) or {}
+            if (ship.get("id"), "standard") in owned:
+                continue
+            affordable = all(materials.get(str(key), 0) >= int(value or 0) for key, value in cost.items())
+            candidates.append((sum(int(value or 0) for value in cost.values()), ship, affordable))
+        affordable = [entry for entry in candidates if entry[2]]
+        if affordable:
+            _, ship, _ = min(affordable, key=lambda entry: entry[0])
+            return {"kind": "craft", "itemKind": "ship", "itemId": ship.get("id"), "shipVariant": "standard", "name": ship.get("name", ship.get("id"))}
+        if candidates:
+            _, ship, _ = min(candidates, key=lambda entry: entry[0])
+            return {"kind": "buy", "itemKind": "ship", "itemId": ship.get("id"), "shipVariant": "standard", "name": ship.get("name", ship.get("id"))}
+        return {"kind": "none"}
+
+    async def maintain(self, user: UserState) -> str | None:
+        now = time.monotonic()
+        if now - self._last_maintenance.get(user.telegram_user_id, 0) < 30:
+            return None
+        self._last_maintenance[user.telegram_user_id] = now
+        state = await self._invoke("playerState", user)
+        catalog = await self._invoke("catalog", user)
+        plan = self.economy_plan(state, catalog)
+        if plan["kind"] == "craft":
+            quote = await self.craft_item(user, itemKind=plan["itemKind"], itemId=plan["itemId"], shipVariant=plan["shipVariant"], quoteOnly=True, beginTrackedOperation=True)
+            fee = quote.get("feeLamports")
+            return f"craft-ready {plan['name']} (materials available; forge quote {fee} lamports; payment not sent)"
+        if plan["kind"] == "buy":
+            return f"buy-recommended {plan['name']} (materials not yet available; no SOL purchase sent)"
+        return None
 
 
 ExternalJsonGameAdapter = PlanetForgeAdapter
@@ -312,3 +383,9 @@ class SelectableGameAdapter(GameAdapter):
 
     async def upgrade(self, user: UserState) -> GameState:
         return await self._adapter(user).upgrade(user)
+
+    async def restart_session(self, user: UserState) -> str | None:
+        return await self._adapter(user).restart_session(user)
+
+    async def maintain(self, user: UserState) -> str | None:
+        return await self._adapter(user).maintain(user)
