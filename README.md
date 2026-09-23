@@ -97,7 +97,7 @@ The bridge contract is:
 
 ## Deployment
 
-This is a long-running Telegram polling worker. Deploy it as a worker on Railway, Render, Fly.io, or another service that keeps a process online. Do not expose a public HTTP port for polling. Mount persistent storage for `STATE_FILE` if user sessions must survive redeployments. The included `railpack.json` provisions Chromium in the runtime image on Railpack-based deployments. Leave `BROWSER_EXECUTABLE_PATH` empty to let the worker discover Chromium automatically; set it only when your platform provides Chromium at a non-standard path. `BROWSER_HEADLESS=true` is recommended for servers.
+This is a long-running Telegram polling worker. Deploy it as a worker on Railway, Render, Fly.io, or another service that keeps a process online. Do not expose a public HTTP port for polling. Mount persistent storage for `STATE_FILE` if user sessions must survive redeployments. The included `runtime.txt` pins the deployment to Python 3.12, matching CI and the verified dependency set. The included `railpack.json` provisions Chromium in the runtime image on Railpack-based deployments. Leave `BROWSER_EXECUTABLE_PATH` empty to let the worker discover Chromium automatically; set it only when your platform provides Chromium at a non-standard path. `BROWSER_HEADLESS=true` is recommended for servers.
 
 For a free, simple hackathon demo, run the offline mode locally or on a worker with `GAME_MODE=demo`. For 24/7 hosting, use an always-on worker; the exact cost depends on the provider and plan. Keep `TELEGRAM_BOT_TOKEN`, bridge credentials, and any game credentials in server-side secrets, never in Git.
 
