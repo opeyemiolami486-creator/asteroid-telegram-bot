@@ -58,7 +58,7 @@ SOLANA_PRIVATE_KEY=<server-side Solana seed>
 PLANET_FORGE_URL=https://planet-forge.com
 BROWSER_WORKER_ENABLED=true
 BROWSER_HEADLESS=true
-BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+BROWSER_EXECUTABLE_PATH=
 ```
 
 The worker creates the unique player identifier from the wallet address, signs the site's one-time login challenge, and then drives the visible canvas. It does not spend SOL or submit wallet transactions.
@@ -79,7 +79,7 @@ POLL_SECONDS=2
 PLANET_FORGE_URL=https://planet-forge.com
 BROWSER_WORKER_ENABLED=true
 BROWSER_HEADLESS=true
-BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+BROWSER_EXECUTABLE_PATH=
 ```
 
 The bridge contract is:
@@ -97,7 +97,7 @@ The bridge contract is:
 
 ## Deployment
 
-This is a long-running Telegram polling worker. Deploy it as a worker on Railway, Render, Fly.io, or another service that keeps a process online. Do not expose a public HTTP port for polling. Mount persistent storage for `STATE_FILE` if user sessions must survive redeployments. Live Planet Forge mode also requires a Chromium executable; set `BROWSER_EXECUTABLE_PATH` to its path in the worker image. `BROWSER_HEADLESS=true` is recommended for servers.
+This is a long-running Telegram polling worker. Deploy it as a worker on Railway, Render, Fly.io, or another service that keeps a process online. Do not expose a public HTTP port for polling. Mount persistent storage for `STATE_FILE` if user sessions must survive redeployments. The included `railpack.json` provisions Chromium in the runtime image on Railpack-based deployments. Leave `BROWSER_EXECUTABLE_PATH` empty to let the worker discover Chromium automatically; set it only when your platform provides Chromium at a non-standard path. `BROWSER_HEADLESS=true` is recommended for servers.
 
 For a free, simple hackathon demo, run the offline mode locally or on a worker with `GAME_MODE=demo`. For 24/7 hosting, use an always-on worker; the exact cost depends on the provider and plan. Keep `TELEGRAM_BOT_TOKEN`, bridge credentials, and any game credentials in server-side secrets, never in Git.
 

@@ -2,6 +2,10 @@
   "$schema": "https://schema.railpack.com",
   "provider": "python",
   "deploy": {
+    "aptPackages": [
+      "...",
+      "chromium"
+    ],
     "startCommand": "python -m bot"
   }
 }

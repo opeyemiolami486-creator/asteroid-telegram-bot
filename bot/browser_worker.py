@@ -8,8 +8,9 @@ Python Solana signer; the private seed never enters page JavaScript. CanvasBot
 then clicks targets and reports only targets that disappear after a click.
 """
 
-import shutil
 import json
+import os
+import shutil
 from typing import Any
 
 from .canvas_bot import CanvasBot, CanvasBotConfig
@@ -41,6 +42,27 @@ WALLET_INIT_SCRIPT = r"""
 """
 
 
+def resolve_browser_executable(configured_path: str = "") -> str:
+    """Return an existing browser executable, or let Playwright use its own one.
+
+    A deployment may retain ``BROWSER_EXECUTABLE_PATH`` from an older image even
+    after that image has changed. Passing that stale path to Playwright makes
+    launch fail before Playwright can use its managed browser. Only return
+    paths that currently exist and are executable; an empty result intentionally
+    leaves executable selection to Playwright.
+    """
+    candidates = [
+        configured_path,
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        shutil.which("google-chrome"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return ""
+
+
 class LiveBrowserWorker:
     """Own one authenticated browser context per Telegram user."""
 
@@ -56,7 +78,7 @@ class LiveBrowserWorker:
         self.game_url = game_url.rstrip("/")
         self.canvas_config = canvas_config or CanvasBotConfig()
         self.headless = headless
-        self.executable_path = executable_path or shutil.which("chromium") or shutil.which("google-chrome") or ""
+        self.executable_path = resolve_browser_executable(executable_path)
         self._playwright: Any = None
         self._browser: Any = None
         self._contexts: dict[int, Any] = {}
