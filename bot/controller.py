@@ -57,6 +57,7 @@ class GameController:
     async def _run(self, user: UserState) -> None:
         waiting_for_repairs = False
         last_repair_notice = 0.0
+        repair_deadline: float | None = None
         try:
             while user.running:
                 if not user.session_id:
@@ -67,10 +68,16 @@ class GameController:
                             await self.notify(user.telegram_user_id, "Ship repairs complete; resuming the game")
                             waiting_for_repairs = False
                             last_repair_notice = 0.0
+                            repair_deadline = None
                     except PlanetForgeShipRepairError as exc:
                         now = time.monotonic()
+                        if exc.remaining_seconds is not None:
+                            repair_deadline = now + max(0, exc.remaining_seconds)
                         if not waiting_for_repairs or now - last_repair_notice >= 30:
-                            await self.notify(user.telegram_user_id, self._repair_message(exc, "retrying automatically"))
+                            await self.notify(
+                                user.telegram_user_id,
+                                self._repair_message(exc, "retrying automatically", repair_deadline, now),
+                            )
                             last_repair_notice = now
                         waiting_for_repairs = True
                         reward = await self.adapter.claim_daily_reward(user)
@@ -90,8 +97,18 @@ class GameController:
                     except PlanetForgeShipRepairError as exc:
                         user.session_id = None
                         now = time.monotonic()
+                        if exc.remaining_seconds is not None:
+                            repair_deadline = now + max(0, exc.remaining_seconds)
                         if not waiting_for_repairs or now - last_repair_notice >= 30:
-                            await self.notify(user.telegram_user_id, self._repair_message(exc, "retrying automatically before the next sector"))
+                            await self.notify(
+                                user.telegram_user_id,
+                                self._repair_message(
+                                    exc,
+                                    "retrying automatically before the next sector",
+                                    repair_deadline,
+                                    now,
+                                ),
+                            )
                             last_repair_notice = now
                         waiting_for_repairs = True
                         reward = await self.adapter.claim_daily_reward(user)
@@ -152,13 +169,18 @@ class GameController:
         return bool(state.resources.get("upgrade_tokens", 0) > 0 or state.resources.get("metal", 0) >= 100)
 
     @staticmethod
-    def _repair_message(error: PlanetForgeShipRepairError, suffix: str) -> str:
+    def _repair_message(
+        error: PlanetForgeShipRepairError,
+        suffix: str,
+        deadline: float | None = None,
+        now: float | None = None,
+    ) -> str:
         remaining = error.remaining_seconds
+        if deadline is not None:
+            remaining = max(0, math.ceil(deadline - (time.monotonic() if now is None else now)))
         if remaining is None:
             return f"Ship is in repairs; {suffix}"
-        minutes, seconds = divmod(max(0, remaining), 60)
-        estimate = f"approximately {minutes}m {seconds:02d}s" if minutes else f"approximately {seconds}s"
-        return f"Ship is in repairs; {estimate} remaining, {suffix}"
+        return f"Ship is in repairs; {max(0, math.ceil(remaining))}s remaining, {suffix}"
 
     async def _sleep_with_countdown(self, user: UserState, cooldown_seconds: float) -> None:
         """Wait between ticks while reporting the remaining cooldown."""

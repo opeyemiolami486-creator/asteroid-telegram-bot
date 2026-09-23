@@ -135,7 +135,8 @@ class PlanetForgeAdapter(GameAdapter):
 
         keys = {
             "remainingSeconds", "repairRemainingSeconds", "repairTimeRemaining",
-            "secondsRemaining", "repairSecondsRemaining", "remaining",
+            "repairTimeRemainingSeconds", "secondsRemaining", "repairSecondsRemaining",
+            "timeRemaining", "timeRemainingSeconds", "repairTimer", "remaining",
         }
 
         def find(value: object) -> float | None:
@@ -177,7 +178,9 @@ class PlanetForgeAdapter(GameAdapter):
                     response.raise_for_status()
                 break
             except httpx.HTTPStatusError as exc:
-                body = exc.response.text[:300]
+                # Timer fields can be nested after a verbose error message;
+                # retain enough of the payload to extract the game's countdown.
+                body = exc.response.text[:4000]
                 if exc.response.status_code == 403 and "invalid run" in body.lower():
                     raise PlanetForgeInvalidRunError("Planet Forge run is no longer valid; starting a fresh run") from exc
                 if exc.response.status_code == 403 and "ship is in repairs" in body.lower():

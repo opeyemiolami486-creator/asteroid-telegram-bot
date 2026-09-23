@@ -81,11 +81,17 @@ def test_payload_marks_level_complete_accepts_live_completion_shapes():
 
 def test_repair_error_extracts_remaining_seconds_from_json():
     assert PlanetForgeAdapter._repair_remaining_seconds('{"error":"ship is in repairs", "remainingSeconds": 125}') == 125
+    assert PlanetForgeAdapter._repair_remaining_seconds('{"details":{"timeRemainingSeconds":42}}') == 42
 
 
 def test_repair_message_includes_remaining_time():
     error = PlanetForgeShipRepairError("repair", remaining_seconds=125)
-    assert GameController._repair_message(error, "waiting") == "Ship is in repairs; approximately 2m 05s remaining, waiting"
+    assert GameController._repair_message(error, "waiting") == "Ship is in repairs; 125s remaining, waiting"
+
+
+def test_repair_message_uses_persisted_deadline_for_live_countdown():
+    error = PlanetForgeShipRepairError("repair")
+    assert GameController._repair_message(error, "retrying", deadline=105.0, now=100.0) == "Ship is in repairs; 5s remaining, retrying"
 
 
 def test_economy_plan_prefers_cooldown_reduction_when_cost_is_affordable():
