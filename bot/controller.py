@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import math
+import time
 from collections.abc import Awaitable, Callable
 
 from .game_adapter import GameAdapter, PlanetForgeShipRepairError
@@ -62,6 +64,7 @@ class GameController:
                 state = await self.adapter.read_state(user)
                 user.last_game = state
                 self.store.put(user)
+                await self.notify(user.telegram_user_id, self._summary(user, "progress"))
                 if state.game_over or not state.alive:
                     summary = self._summary(user, "sector complete")
                     try:
@@ -93,10 +96,8 @@ class GameController:
                     state = await self.adapter.submit_action(user, self._next_action(user, state))
                 user.last_game = state
                 self.store.put(user)
-                await self.notify(user.telegram_user_id, self._summary(user, "tick"))
-                # The server enforces the action cooldown; polling at the normal
-                # interval avoids adding a second full cooldown delay locally.
-                await asyncio.sleep(self.poll_seconds)
+                await self.notify(user.telegram_user_id, self._summary(user, "progress"))
+                await self._sleep_with_countdown(user, state.cooldown_seconds)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -109,6 +110,20 @@ class GameController:
     @staticmethod
     def _upgrade_available(state) -> bool:
         return bool(state.resources.get("upgrade_tokens", 0) > 0 or state.resources.get("metal", 0) >= 100)
+
+    async def _sleep_with_countdown(self, user: UserState, cooldown_seconds: float) -> None:
+        """Wait between ticks while reporting the remaining cooldown."""
+        remaining = max(0.0, float(cooldown_seconds or 0.0))
+        if remaining <= 0:
+            await asyncio.sleep(self.poll_seconds)
+            return
+        deadline = time.monotonic() + remaining
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            await self.notify(user.telegram_user_id, f"cooldown: {math.ceil(remaining)}s remaining")
+            await asyncio.sleep(min(max(self.poll_seconds, 0.1), remaining))
 
     @staticmethod
     def _choose_action(state):

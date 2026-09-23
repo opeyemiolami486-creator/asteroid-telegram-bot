@@ -149,7 +149,10 @@ def build_app() -> Application:
         user = get_user(update)
         try:
             await controller.start(user)
-            await update.message.reply_text(f"Play loop started against {user.target_url or default_target}. Use /stop to halt it.")
+            await update.message.reply_text(
+                f"Play loop started against {user.target_url or default_target}. "
+                "Progress updates will be sent each cycle. Use /stop to halt it."
+            )
         except Exception as exc:
             await update.message.reply_text(f"Cannot start yet: {exc}")
 
