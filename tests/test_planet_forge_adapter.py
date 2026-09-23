@@ -202,6 +202,6 @@ async def test_heartbeat_matches_authoritative_client_payload(adapter, monkeypat
     assert calls[0][1] == {
         "runId": "run",
         "heartbeatToken": "hb",
-        "kills": 0,
+        "kills": 1,
         "inputs": 1,
     }

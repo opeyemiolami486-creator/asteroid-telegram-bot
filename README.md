@@ -8,6 +8,18 @@ The supplied [StonkScape reference site](https://play.stonkscape.com/rs2.cgi) is
 
 The bot includes a `StonkScapeBridgeAdapter` with a small JSON contract. An organizer-authorized browser worker or test harness can implement the bridge while the Telegram bot handles user sessions, policy, persistence, and notifications. This separation makes the implementation honest, testable, and easy to connect to the hackathon's approved game interface.
 
+## Canvas aiming worker
+
+`bot/canvas_bot.py` contains an opt-in `CanvasBot` for an organizer-authorized browser page that is already logged in and open to the test game. It reads the visible canvas through `getImageData`, finds connected high-saturation target regions, prioritizes the highest-value target, and clicks at its centroid. The worker has explicit shot and runtime bounds and contains no login, credential, network, score-submission, or account-management code. A browser worker can provide its existing Playwright page object and call `await CanvasBot().play(page)`; the Telegram controller and bridge remain responsible for session policy and stop behavior.
+
+The local harness verifies the aiming policy without opening a live target:
+
+```bash
+python -m pytest -q tests/test_canvas_bot.py
+```
+
+The deterministic fixture clears three targets, records three hits, and reaches a 300-point high score. This is a validation result only; it is not a submission to the hackathon service.
+
 ## Telegram commands
 
 - `/login <game_username> <game_password>` — authenticate an Existing User account in a private chat.

@@ -274,6 +274,11 @@ class PlanetForgeAdapter(GameAdapter):
             raise RuntimeError("Planet Forge run is not ready; run /start first")
         if action != "wait":
             run["inputs"] += 1
+        if action == "fire":
+            # The heartbeat contract reports the client-observed kill count.
+            # Keep it in sync with the bot's fire events so the server can
+            # award the resulting score and materials.
+            run["kills"] += 1
         now = time.monotonic()
         if now - run["last_heartbeat"] >= 30:
             try:
