@@ -274,22 +274,16 @@ class PlanetForgeAdapter(GameAdapter):
             raise RuntimeError("Planet Forge run is not ready; run /start first")
         if action != "wait":
             run["inputs"] += 1
-        if action == "fire":
-            run["kills"] += 1
         now = time.monotonic()
         if now - run["last_heartbeat"] >= 30:
             try:
-                shots = run["inputs"]
                 await self._invoke(
                     "runHeartbeat",
                     user,
                     runId=run["run_id"],
                     heartbeatToken=run["heartbeat_token"],
                     kills=run["kills"],
-                    hits=run["kills"],
-                    shots=shots,
                     inputs=run["inputs"],
-                    accuracy=(run["kills"] / shots if shots else 0.0),
                 )
             except PlanetForgeInvalidRunError:
                 # A run can expire server-side while the bot is paused, redeployed,
@@ -304,13 +298,9 @@ class PlanetForgeAdapter(GameAdapter):
     async def _complete(self, user: UserState, run: dict, survived: bool) -> dict:
         if run["completed"]:
             return {}
-        shots = run["inputs"]
         result = {
             "timeMs": int((time.monotonic() - run["started_at"]) * 1000),
             "kills": run["kills"],
-            "hits": run["kills"],
-            "shots": shots,
-            "accuracy": (run["kills"] / shots if shots else 0.0),
             "materials": {},
             "survived": survived,
         }

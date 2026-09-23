@@ -182,7 +182,7 @@ async def test_missing_preview_branch_completes_as_recoverable_run(adapter, monk
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_includes_shot_hit_and_accuracy_telemetry(adapter, monkeypatch):
+async def test_heartbeat_matches_authoritative_client_payload(adapter, monkeypatch):
     user = UserState(5, Wallet(adapter.signer.address, "00" * 32))
     adapter._runs[user.telegram_user_id] = {
         "run_id": "run", "heartbeat_token": "hb", "level_id": "one",
@@ -199,6 +199,9 @@ async def test_heartbeat_includes_shot_hit_and_accuracy_telemetry(adapter, monke
     await adapter.submit_action(user, "fire")
 
     assert calls[0][0] == "runHeartbeat"
-    assert calls[0][1]["shots"] == 1
-    assert calls[0][1]["hits"] == 1
-    assert calls[0][1]["accuracy"] == 1.0
+    assert calls[0][1] == {
+        "runId": "run",
+        "heartbeatToken": "hb",
+        "kills": 0,
+        "inputs": 1,
+    }
