@@ -4,6 +4,7 @@ import asyncio
 import math
 import time
 from collections.abc import Awaitable, Callable
+from typing import Protocol
 
 from .game_adapter import GameAdapter, PlanetForgeShipRepairError
 from .models import GameState, UserState
@@ -12,12 +13,18 @@ from .store import StateStore
 Notify = Callable[[int, str], Awaitable[None]]
 
 
+class CanvasWorker(Protocol):
+    async def play(self, user: UserState, adapter: GameAdapter) -> dict[str, int]: ...
+    async def close(self, user: UserState) -> None: ...
+
+
 class GameController:
-    def __init__(self, store: StateStore, adapter: GameAdapter, notify: Notify, poll_seconds: float) -> None:
+    def __init__(self, store: StateStore, adapter: GameAdapter, notify: Notify, poll_seconds: float, canvas_worker: CanvasWorker | None = None) -> None:
         self.store = store
         self.adapter = adapter
         self.notify = notify
         self.poll_seconds = poll_seconds
+        self.canvas_worker = canvas_worker
         self.tasks: dict[int, asyncio.Task[None]] = {}
         self.action_phase: dict[int, int] = {}
         self.high_scores: dict[int, int] = {}
@@ -43,6 +50,8 @@ class GameController:
         if task and task is not asyncio.current_task():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        if self.canvas_worker is not None:
+            await self.canvas_worker.close(user)
         self.store.put(user)
 
     async def _run(self, user: UserState) -> None:
@@ -98,7 +107,14 @@ class GameController:
                 maintenance = await self.adapter.maintain(user)
                 if maintenance:
                     await self.notify(user.telegram_user_id, f"economy: {maintenance}")
-                if self._upgrade_available(state):
+                if self.canvas_worker is not None:
+                    result = await self.canvas_worker.play(user, self.adapter)
+                    await self.notify(
+                        user.telegram_user_id,
+                        f"canvas: shots={result.get('shots_fired', 0)}, confirmed kills={result.get('targets_hit', 0)}",
+                    )
+                    state = await self.adapter.read_state(user)
+                elif self._upgrade_available(state):
                     state = await self.adapter.upgrade(user)
                 else:
                     state = await self.adapter.submit_action(user, self._next_action(user, state))
@@ -114,6 +130,8 @@ class GameController:
             self.store.put(user)
             await self.notify(user.telegram_user_id, f"Run paused safely: {exc}")
         finally:
+            if self.canvas_worker is not None and not user.running:
+                await self.canvas_worker.close(user)
             self.tasks.pop(user.telegram_user_id, None)
 
     @staticmethod

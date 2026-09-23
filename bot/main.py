@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from .browser_worker import LiveBrowserWorker
 from .controller import GameController
 from .game_adapter import SelectableGameAdapter, normalize_target
 from .models import GameState, UserState
@@ -23,6 +24,10 @@ class Settings(BaseSettings):
     stonkscape_bridge_url: str = ""
     solana_private_key: str = ""
     planet_forge_app_id: str = ""
+    planet_forge_url: str = "https://planet-forge.com"
+    browser_worker_enabled: bool = True
+    browser_headless: bool = True
+    browser_executable_path: str = ""
     state_file: str = "./data/state.json"
     poll_seconds: float = 2.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -58,7 +63,15 @@ def build_app() -> Application:
     async def notify(user_id: int, text: str) -> None:
         await app.bot.send_message(chat_id=user_id, text=text)
 
-    controller = GameController(store, adapter, notify, settings.poll_seconds)
+    canvas_worker = None
+    if settings.browser_worker_enabled and settings.game_mode.lower() in {"external", "planetforge"}:
+        canvas_worker = LiveBrowserWorker(
+            signer,
+            game_url=settings.planet_forge_url,
+            headless=settings.browser_headless,
+            executable_path=settings.browser_executable_path,
+        )
+    controller = GameController(store, adapter, notify, settings.poll_seconds, canvas_worker=canvas_worker)
 
     def get_user(update: Update) -> UserState:
         assert update.effective_user is not None

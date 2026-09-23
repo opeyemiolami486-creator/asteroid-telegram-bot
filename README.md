@@ -32,7 +32,9 @@ The deterministic fixture clears three targets, records three hits, and reaches 
 
 Each Telegram user has an independent persisted state. The loop is cancellable, errors pause the user rather than crashing the whole bot, and no payment or wallet secret is sent to Telegram.
 
-Planet Forge preview runs are treated as disposable: if the service returns `Preview branch not found` while completing a run, the bot marks that run finished and advances to a fresh sector instead of pausing. The live browser client shows that cannons fire automatically; its authoritative contract is `runHeartbeat({runId, heartbeatToken, kills, inputs})` followed by `completeLevel({levelId, shipInvId, runId, result:{timeMs, kills, materials, survived}})`. The server verifies kills and rewards against the run, so this adapter no longer fabricates kills from a local `fire` command or sends unsupported `hits`, `shots`, or `accuracy` fields. A real browser/authorized bridge must provide the client’s actual input events and locally observed kills for authoritative rewards.
+Planet Forge preview runs are treated as disposable: if the service returns `Preview branch not found` while completing a run, the bot marks that run finished and advances to a fresh sector instead of pausing. The live browser client shows that cannons fire automatically; its authoritative contract is `runHeartbeat({runId, heartbeatToken, kills, inputs})` followed by `completeLevel({levelId, shipInvId, runId, result:{timeMs, kills, materials, survived}})`. The server verifies kills and rewards against the run, so this adapter no longer fabricates kills from a local `fire` command or sends unsupported `hits`, `shots`, or `accuracy` fields.
+
+In Planet Forge mode, `/play` now starts a Playwright browser worker. The worker injects a Phantom-compatible, non-transactional provider backed by the configured Solana signer, signs only the one-time authentication message, opens the live game canvas, and runs `CanvasBot`. A kill is reported to the server only after the target has disappeared from the canvas. The private key is never injected into page JavaScript or sent to PlanetForge.
 
 ## Local demo
 
@@ -47,6 +49,20 @@ python -m bot
 
 The default `GAME_MODE=demo` works without a game account or external service. It is the safest way to demonstrate the complete `/start` → `/play` → `/status` → `/stop` flow.
 
+For live PlanetForge gameplay, use the configured generator wallet and set:
+
+```text
+GAME_MODE=external
+GAME_BASE_URL=https://planet-forge.com
+SOLANA_PRIVATE_KEY=<server-side Solana seed>
+PLANET_FORGE_URL=https://planet-forge.com
+BROWSER_WORKER_ENABLED=true
+BROWSER_HEADLESS=true
+BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+```
+
+The worker creates the unique player identifier from the wallet address, signs the site's one-time login challenge, and then drives the visible canvas. It does not spend SOL or submit wallet transactions.
+
 In StonkScape mode, the flow mirrors the reference client's visible **Existing User** path: send `/login username password` in a private Telegram chat, then `/start` to obtain a unique play code, then `/play` to begin autonomous play. The bot attempts to delete the login message, sends the password only to the authorized bridge, and discards it immediately after authentication; it is not echoed, logged, or written to `data/state.json`. Use a private chat because Telegram command messages are visible to the chat participants.
 
 ## Authorized StonkScape bridge mode
@@ -60,6 +76,10 @@ GAME_BASE_URL=https://play.stonkscape.com/rs2.cgi
 STONKSCAPE_BRIDGE_URL=https://your-authorized-bridge.example
 STATE_FILE=./data/state.json
 POLL_SECONDS=2
+PLANET_FORGE_URL=https://planet-forge.com
+BROWSER_WORKER_ENABLED=true
+BROWSER_HEADLESS=true
+BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ```
 
 The bridge contract is:
@@ -77,7 +97,7 @@ The bridge contract is:
 
 ## Deployment
 
-This is a long-running Telegram polling worker. Deploy it as a worker on Railway, Render, Fly.io, or another service that keeps a process online. Do not expose a public HTTP port for polling. Mount persistent storage for `STATE_FILE` if user sessions must survive redeployments.
+This is a long-running Telegram polling worker. Deploy it as a worker on Railway, Render, Fly.io, or another service that keeps a process online. Do not expose a public HTTP port for polling. Mount persistent storage for `STATE_FILE` if user sessions must survive redeployments. Live Planet Forge mode also requires a Chromium executable; set `BROWSER_EXECUTABLE_PATH` to its path in the worker image. `BROWSER_HEADLESS=true` is recommended for servers.
 
 For a free, simple hackathon demo, run the offline mode locally or on a worker with `GAME_MODE=demo`. For 24/7 hosting, use an always-on worker; the exact cost depends on the provider and plan. Keep `TELEGRAM_BOT_TOKEN`, bridge credentials, and any game credentials in server-side secrets, never in Git.
 

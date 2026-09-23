@@ -88,7 +88,7 @@ CANVAS_SCAN_SCRIPT = r"""
       value: Math.max(1, Math.round(Math.min(99, count / 2))), radius: Math.max(1, Math.max(maxX - minX, maxY - minY) * scale / 2)});
   }
   return points;
-})
+}
 """
 
 
