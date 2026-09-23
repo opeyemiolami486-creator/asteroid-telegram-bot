@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from .controller import GameController
-from .game_adapter import ReferenceSiteAdapter
+from .game_adapter import DemoGameAdapter, ReferenceSiteAdapter
 from .models import UserState
 from .store import StateStore
 from .wallet import LocalWalletProvider
@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 class Settings(BaseSettings):
     telegram_bot_token: str
+    game_mode: str = "demo"
     state_file: str = "./data/state.json"
     poll_seconds: float = 2.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -28,7 +29,7 @@ def build_app() -> Application:
     settings = Settings()
     store = StateStore(settings.state_file)
     wallet_provider = LocalWalletProvider()
-    adapter = ReferenceSiteAdapter()
+    adapter = DemoGameAdapter() if settings.game_mode.lower() == "demo" else ReferenceSiteAdapter()
     app = Application.builder().token(settings.telegram_bot_token).build()
 
     async def notify(user_id: int, text: str) -> None:

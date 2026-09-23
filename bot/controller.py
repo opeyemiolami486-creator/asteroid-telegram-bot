@@ -50,6 +50,7 @@ class GameController:
                 if state.game_over or not state.alive:
                     await self.notify(user.telegram_user_id, self._summary(user, "run ended"))
                     user.running = False
+                    self.store.put(user)
                     break
                 if self._upgrade_available(state):
                     state = await self.adapter.upgrade(user)
@@ -65,6 +66,8 @@ class GameController:
             user.running = False
             self.store.put(user)
             await self.notify(user.telegram_user_id, f"Run paused safely: {exc}")
+        finally:
+            self.tasks.pop(user.telegram_user_id, None)
 
     @staticmethod
     def _upgrade_available(state) -> bool:

@@ -1,17 +1,17 @@
 # Asteroid Telegram Bot
 
-Public hackathon scaffold for a Telegram-controlled asteroid game runner. The bot creates a per-user local wallet record, requests a unique play code through a game adapter, and reports run statistics after each play. The adapter is intentionally unimplemented until an isolated, authorized test harness and its request/response flow are supplied.
+Telegram-controlled asteroid-mining game runner for the hackathon. In the default **Demo Forge** mode, each player gets a deterministic play code and an offline session where the bot starts a scrap ship, shatters asteroids, harvests ore and metal, and forges upgrades. The game loop follows the reference site's public fantasy without contacting the reference site.
 
 ## Safety and scope
 
-This repository must only be used against an isolated, authorized hackathon test harness. Do not point it at `planet-forge.com` or any real game, exchange, wallet, or account: its public tutorial describes real Solana wallet signing, SOL forge fees, server-side reward controls, and detection or suspension of scripted play. Never commit `.env`, generated state, session cookies, private keys, or Telegram tokens. The generated wallet secret is stored locally only and is shown once in `/start`; replace the local wallet provider with the test harness's documented wallet format before using it for login.
+This repository must only be used against an isolated, authorized hackathon test harness. Do not point it at `planet-forge.com` or any real game, exchange, wallet, or account. Never commit `.env`, generated state, session cookies, private keys, or Telegram tokens. The generated wallet record is a local demo placeholder, not a Solana wallet and not suitable for real funds.
 
 ## Commands
 
-- `/start` — create or display the user's bot profile and wallet details, then request a play code.
-- `/play` — start the per-user loop.
+- `/start` — create or display the user's bot profile and request a demo play code.
+- `/play` — start the per-user mining loop.
 - `/stop` — stop the loop gracefully.
-- `/status` — show the most recent score, resources, position, ship, rank, upgrades, and cooldown.
+- `/status` — show the latest score, resources, position, ship, rank, upgrades, and cooldown.
 
 ## Run locally
 
@@ -20,18 +20,20 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# set TELEGRAM_BOT_TOKEN and the fake game URL/paths
+# set TELEGRAM_BOT_TOKEN
 python -m bot
 ```
 
-## Adapter contract
+## Game modes and adapter contract
 
-`bot/game_adapter.py` defines the integration boundary:
+Set `GAME_MODE=demo` (the default) for judging and local demos. The deterministic `DemoGameAdapter` is self-contained, so it works without a database, chain, or external game account. The demo provides a short, repeatable loop: fire to mine, collect metal and upgrade tokens, and automatically forge stronger ships when the controller can afford an upgrade.
 
-1. request a unique play code for a Telegram user and wallet address;
-2. exchange the play code for a game session;
-3. read the current game state;
-4. submit one legal action;
-5. perform an upgrade when resources and cooldown permit.
+The controller uses an explicit state/action model: request a play code, start a session, read state, submit one legal action, and upgrade when resources permit. Set another mode only when an isolated, authorized test harness has supplied a documented contract; the `ReferenceSiteAdapter` remains a fail-closed boundary and will not infer undocumented endpoints.
 
-The controller uses an explicit state/action model and will not infer undocumented endpoints. Once an isolated test URL or local API fixture is provided, capture that fake API or browser flow, implement the adapter, add fixture tests, and run an authorized end-to-end smoke test. The current public PlanetForge URL is documentation only and is not an implementation target.
+## Tests
+
+```bash
+pytest -q
+```
+
+The tests cover the conservative controller policy and the demo adapter's mining and forging behavior.
