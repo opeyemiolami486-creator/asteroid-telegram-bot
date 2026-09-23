@@ -48,6 +48,10 @@ class GameAdapter(ABC):
         return None
 
 
+class PlanetForgeInvalidRunError(RuntimeError):
+    """Raised when Planet Forge has expired or invalidated the active run."""
+
+
 def normalize_target(value: str) -> str:
     target = value.strip()
     if target.lower() in {"demo", "local", "offline"}:
@@ -88,7 +92,12 @@ class PlanetForgeAdapter(GameAdapter):
                 )
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise RuntimeError(f"Planet Forge {function} returned HTTP {exc.response.status_code}: {exc.response.text[:300]}") from exc
+            body = exc.response.text[:300]
+            if exc.response.status_code == 403 and "invalid run" in body.lower():
+                raise PlanetForgeInvalidRunError(
+                    "Planet Forge run is no longer valid; starting a fresh run"
+                ) from exc
+            raise RuntimeError(f"Planet Forge {function} returned HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise RuntimeError(f"could not reach external target {self.base_url}: {exc}") from exc
         try:
@@ -210,7 +219,15 @@ class PlanetForgeAdapter(GameAdapter):
             run["kills"] += 1
         now = time.monotonic()
         if now - run["last_heartbeat"] >= 30:
-            await self._invoke("runHeartbeat", user, runId=run["run_id"], heartbeatToken=run["heartbeat_token"], kills=run["kills"], inputs=run["inputs"])
+            try:
+                await self._invoke("runHeartbeat", user, runId=run["run_id"], heartbeatToken=run["heartbeat_token"], kills=run["kills"], inputs=run["inputs"])
+            except PlanetForgeInvalidRunError:
+                # A run can expire server-side while the bot is paused, redeployed,
+                # or between ticks.  Do not stop the user's loop for that expected
+                # lifecycle event; replace the stale run and continue from state.
+                new_run_id = await self.start_session(user, user.play_code or "")
+                user.session_id = new_run_id
+                return await self.read_state(user)
             run["last_heartbeat"] = now
         return await self.read_state(user)
 

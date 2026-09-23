@@ -1,6 +1,6 @@
 import pytest
 
-from bot.game_adapter import PlanetForgeAdapter
+from bot.game_adapter import PlanetForgeAdapter, PlanetForgeInvalidRunError
 from bot.models import UserState, Wallet
 from bot.wallet import SolanaWalletProvider
 
@@ -73,3 +73,40 @@ async def test_restart_chooses_highest_normal_level_unlocked_by_xp(adapter, monk
     run_id = await adapter.start_session(user, "pilot")
     assert run_id == "run-1"
     assert [args for name, args in calls if name == "startRun"][0]["levelId"] == "three"
+
+
+@pytest.mark.asyncio
+async def test_invalid_heartbeat_restarts_run_and_keeps_tick_alive(adapter, monkeypatch):
+    user = UserState(2, Wallet(adapter.signer.address, "00" * 32), play_code="pilot")
+    adapter._runs[user.telegram_user_id] = {
+        "run_id": "expired-run",
+        "heartbeat_token": "expired-token",
+        "level_id": "one",
+        "ship_inv_id": "ship-inv",
+        "started_at": 0.0,
+        "duration": 90.0,
+        "kills": 0,
+        "inputs": 0,
+        "last_heartbeat": 0.0,
+        "completed": False,
+    }
+    calls = []
+
+    async def invoke(function, _user, **args):
+        calls.append((function, args))
+        if function == "runHeartbeat":
+            raise PlanetForgeInvalidRunError("Planet Forge run is no longer valid")
+        if function == "playerState":
+            return {"player": {"xp": 10, "equippedShipId": "ship-inv"}, "inventory": [{"itemKind": "ship", "id": "ship-inv", "itemId": "ship"}]}
+        if function == "catalog":
+            return {"levels": [{"id": "one", "order": 1, "xpRequired": 0, "durationSec": 90}]}
+        return {"runId": "fresh-run", "heartbeatToken": "fresh-token"}
+
+    monkeypatch.setattr(adapter, "_invoke", invoke)
+
+    state = await adapter.submit_action(user, "fire")
+
+    assert state.alive
+    assert user.session_id == "fresh-run"
+    assert adapter._runs[user.telegram_user_id]["run_id"] == "fresh-run"
+    assert [name for name, _ in calls] == ["runHeartbeat", "playerState", "catalog", "startRun", "playerState"]
