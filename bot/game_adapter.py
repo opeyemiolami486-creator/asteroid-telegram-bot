@@ -53,6 +53,10 @@ class GameAdapter(ABC):
         """Claim an available daily reward; unsupported targets safely do nothing."""
         return None
 
+    async def record_observed_kill(self, user: UserState) -> GameState:
+        """Record a kill confirmed by an authorized game client, if supported."""
+        return await self.read_state(user)
+
 
 class PlanetForgeInvalidRunError(RuntimeError):
     """Raised when Planet Forge has expired or invalidated the active run."""
@@ -318,11 +322,6 @@ class PlanetForgeAdapter(GameAdapter):
             raise RuntimeError("Planet Forge run is not ready; run /start first")
         if action != "wait":
             run["inputs"] += 1
-        if action == "fire":
-            # The heartbeat contract reports the client-observed kill count.
-            # Keep it in sync with the bot's fire events so the server can
-            # award the resulting score and materials.
-            run["kills"] += 1
         now = time.monotonic()
         if now - run["last_heartbeat"] >= 30:
             try:
@@ -341,6 +340,25 @@ class PlanetForgeAdapter(GameAdapter):
                 new_run_id = await self.start_session(user, user.play_code or "")
                 user.session_id = new_run_id
                 return await self.read_state(user)
+            run["last_heartbeat"] = now
+        return await self.read_state(user)
+
+    async def record_observed_kill(self, user: UserState) -> GameState:
+        """Report a kill confirmed by the authenticated canvas worker."""
+        run = self._runs.get(user.telegram_user_id)
+        if not run:
+            raise RuntimeError("Planet Forge run is not ready; run /start first")
+        run["kills"] += 1
+        now = time.monotonic()
+        if now - run["last_heartbeat"] >= 30:
+            await self._invoke(
+                "runHeartbeat",
+                user,
+                runId=run["run_id"],
+                heartbeatToken=run["heartbeat_token"],
+                kills=run["kills"],
+                inputs=run["inputs"],
+            )
             run["last_heartbeat"] = now
         return await self.read_state(user)
 
@@ -571,6 +589,9 @@ class SelectableGameAdapter(GameAdapter):
 
     async def submit_action(self, user: UserState, action: ActionName) -> GameState:
         return await self._adapter(user).submit_action(user, action)
+
+    async def record_observed_kill(self, user: UserState) -> GameState:
+        return await self._adapter(user).record_observed_kill(user)
 
     async def upgrade(self, user: UserState) -> GameState:
         return await self._adapter(user).upgrade(user)

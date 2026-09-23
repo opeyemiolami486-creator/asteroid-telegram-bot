@@ -12,7 +12,8 @@ class FakeMouse:
 
     async def click(self, x, y):
         self.clicks.append((x, y))
-        self.page.remaining = [target for target in self.page.remaining if abs(target.x - x) > 0.1 or abs(target.y - y) > 0.1]
+        backing_x, backing_y = x * 2, y * 2
+        self.page.remaining = [target for target in self.page.remaining if abs(target.x - backing_x) > 0.1 or abs(target.y - backing_y) > 0.1]
         self.page.score += 100
 
 
@@ -24,7 +25,7 @@ class FakeCanvasPage:
 
     async def evaluate(self, expression, arg=None):
         if "document.querySelector(selector)" in expression and "c.width" in expression:
-            return {"width": 800, "height": 500}
+            return {"width": 800, "height": 500, "cssWidth": 400, "cssHeight": 250}
         if "getImageData" in expression:
             return [target.__dict__ for target in self.remaining]
         raise AssertionError(f"unexpected browser expression: {expression[:80]}")
@@ -43,10 +44,26 @@ async def test_canvas_bot_aims_at_high_value_target_first_and_reaches_high_score
 
     result = await bot.play(page)
 
-    assert page.mouse.clicks[0] == (640, 250)
+    assert page.mouse.clicks[0] == (320, 125)
     assert result == {"shots_fired": 3, "targets_hit": 3}
     assert page.score == 300
     assert not page.remaining
+
+
+@pytest.mark.asyncio
+async def test_canvas_bot_reports_only_targets_that_disappear_after_click():
+    page = FakeCanvasPage([CanvasTarget(200, 200)])
+    confirmed = []
+    bot = CanvasBot(CanvasBotConfig(max_shots=1, max_runtime_seconds=1, shot_interval_seconds=0))
+
+    result = await bot.play(page, on_confirmed_hit=lambda: _record(confirmed))
+
+    assert result == {"shots_fired": 1, "targets_hit": 1}
+    assert confirmed == [True]
+
+
+async def _record(values):
+    values.append(True)
 
 
 def test_select_target_prefers_value_then_shortest_distance():

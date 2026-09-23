@@ -212,6 +212,28 @@ async def test_heartbeat_matches_authoritative_client_payload(adapter, monkeypat
     assert calls[0][1] == {
         "runId": "run",
         "heartbeatToken": "hb",
-        "kills": 1,
+        "kills": 0,
         "inputs": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_observed_kill_is_reported_separately_from_fire_input(adapter, monkeypatch):
+    user = UserState(6, Wallet(adapter.signer.address, "00" * 32))
+    adapter._runs[user.telegram_user_id] = {
+        "run_id": "run", "heartbeat_token": "hb", "level_id": "one",
+        "ship_inv_id": "ship-inv", "started_at": 9999999999.0, "duration": 90.0,
+        "kills": 0, "inputs": 1, "last_heartbeat": 0.0, "completed": False,
+    }
+    calls = []
+
+    async def invoke(function, _user, **args):
+        calls.append((function, args))
+        return {"score": 10}
+
+    monkeypatch.setattr(adapter, "_invoke", invoke)
+    await adapter.record_observed_kill(user)
+
+    assert calls[0] == ("runHeartbeat", {
+        "runId": "run", "heartbeatToken": "hb", "kills": 1, "inputs": 1,
+    })

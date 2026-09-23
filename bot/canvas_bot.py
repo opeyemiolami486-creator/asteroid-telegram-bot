@@ -11,6 +11,7 @@ worker clicks only at targets returned by that reader.
 from dataclasses import dataclass
 import asyncio
 import math
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 
@@ -33,6 +34,9 @@ class CanvasBotConfig:
     target_min_brightness: float = 0.45
     target_max_brightness: float = 0.98
     edge_margin: int = 12
+    hit_confirm_timeout_seconds: float = 0.35
+    hit_confirm_poll_seconds: float = 0.04
+    hit_confirm_radius_padding: float = 10.0
 
 
 class BrowserPage(Protocol):
@@ -130,7 +134,28 @@ class CanvasBot:
                 continue
         return targets
 
-    async def play(self, page: BrowserPage) -> dict[str, int]:
+    def _target_still_present(self, before: CanvasTarget, after: list[CanvasTarget]) -> bool:
+        """Treat a target as unhit while a matching visual target remains."""
+        return any(
+            math.hypot(target.x - before.x, target.y - before.y)
+            <= max(before.radius, target.radius) + self.config.hit_confirm_radius_padding
+            for target in after
+        )
+
+    async def _confirm_hit(self, page: BrowserPage, target: CanvasTarget) -> bool:
+        deadline = asyncio.get_running_loop().time() + self.config.hit_confirm_timeout_seconds
+        while True:
+            if not self._target_still_present(target, await self.scan(page)):
+                return True
+            if asyncio.get_running_loop().time() >= deadline:
+                return False
+            await asyncio.sleep(self.config.hit_confirm_poll_seconds)
+
+    async def play(
+        self,
+        page: BrowserPage,
+        on_confirmed_hit: Callable[[], Awaitable[None]] | None = None,
+    ) -> dict[str, int]:
         """Run until the shot/runtime bound is reached or the canvas has no target.
 
         The browser page owns authentication and game lifecycle. This method is
@@ -141,7 +166,7 @@ class CanvasBot:
             if asyncio.get_running_loop().time() - started >= self.config.max_runtime_seconds:
                 break
             frame = await page.evaluate(
-                """selector => { const c = document.querySelector(selector); return c ? {width:c.width,height:c.height} : null; }""",
+                """selector => { const c = document.querySelector(selector); const r = c && c.getBoundingClientRect(); return c ? {width:c.width,height:c.height,cssWidth:r.width,cssHeight:r.height} : null; }""",
                 self.config.canvas_selector,
             )
             if not isinstance(frame, dict) or not frame.get("width") or not frame.get("height"):
@@ -150,19 +175,41 @@ class CanvasBot:
             if target is None:
                 await asyncio.sleep(self.config.scan_interval_seconds)
                 continue
-            await page.mouse.click(target.x, target.y)
+            css_width = float(frame.get("cssWidth") or frame["width"])
+            css_height = float(frame.get("cssHeight") or frame["height"])
+            await page.mouse.click(target.x * css_width / float(frame["width"]), target.y * css_height / float(frame["height"]))
             self.shots_fired += 1
-            self.targets_hit += 1
+            if await self._confirm_hit(page, target):
+                self.targets_hit += 1
+                if on_confirmed_hit is not None:
+                    await on_confirmed_hit()
             await asyncio.sleep(self.config.shot_interval_seconds)
         return {"shots_fired": self.shots_fired, "targets_hit": self.targets_hit}
 
 
-async def run_authorized_page(page: BrowserPage, config: CanvasBotConfig | None = None) -> dict[str, int]:
+async def run_authorized_page(
+    page: BrowserPage,
+    config: CanvasBotConfig | None = None,
+    on_confirmed_hit: Callable[[], Awaitable[None]] | None = None,
+) -> dict[str, int]:
     """Convenience entry point for a caller that already owns a browser session."""
-    return await CanvasBot(config).play(page)
+    return await CanvasBot(config).play(page, on_confirmed_hit=on_confirmed_hit)
 
 
-__all__ = ["BrowserPage", "CanvasBot", "CanvasBotConfig", "CanvasTarget", "run_authorized_page"]
+async def run_authorized_page_with_adapter(
+    page: BrowserPage,
+    adapter: Any,
+    user: Any,
+    config: CanvasBotConfig | None = None,
+) -> dict[str, int]:
+    """Play a logged-in page and report only canvas-confirmed kills to an adapter."""
+    async def on_confirmed_hit() -> None:
+        await adapter.record_observed_kill(user)
+
+    return await CanvasBot(config).play(page, on_confirmed_hit=on_confirmed_hit)
+
+
+__all__ = ["BrowserPage", "CanvasBot", "CanvasBotConfig", "CanvasTarget", "run_authorized_page", "run_authorized_page_with_adapter"]
 
 
 if __name__ == "__main__":
