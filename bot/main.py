@@ -19,9 +19,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 class Settings(BaseSettings):
     telegram_bot_token: str
     game_mode: str = "demo"
-    game_base_url: str = ""
+    game_base_url: str = "https://play.stonkscape.com/rs2.cgi"
+    stonkscape_bridge_url: str = ""
     solana_private_key: str = ""
-    planet_forge_app_id: str = "6a845b273cbe45715e037048"
+    planet_forge_app_id: str = ""
     state_file: str = "./data/state.json"
     poll_seconds: float = 2.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -35,6 +36,10 @@ def build_app() -> Application:
         default_target = "demo"
         wallet_provider = DemoWalletProvider()
         signer = None
+    elif settings.game_mode.lower() == "stonkscape":
+        default_target = settings.game_base_url
+        wallet_provider = DemoWalletProvider()
+        signer = None
     elif settings.game_base_url:
         default_target = settings.game_base_url
         wallet_provider = SolanaWalletProvider(settings.solana_private_key)
@@ -44,6 +49,8 @@ def build_app() -> Application:
     adapter = SelectableGameAdapter(
         default_target,
         signer=signer,
+        game_mode=settings.game_mode,
+        bridge_url=settings.stonkscape_bridge_url,
         app_id=settings.planet_forge_app_id,
     )
     app = Application.builder().token(settings.telegram_bot_token).build()
@@ -77,8 +84,7 @@ def build_app() -> Application:
             await update.message.reply_text(
                 "Profile ready.\n"
                 f"Target: {user.target_url or default_target}\n"
-                f"Wallet address: {wallet.address}\n"
-                f"Pilot session: {play_code}\n\n"
+                f"Unique play code: {play_code}\n\n"
                 "Use /play to begin, /status for stats, /target <demo|https://your-test-harness> to switch target, or /stop to halt."
             )
         except Exception as exc:

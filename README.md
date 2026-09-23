@@ -1,71 +1,73 @@
-# Asteroid Telegram Bot
+# StonkScape Telegram Pilot
 
-Telegram-controlled Planet Forge pilot for the hackathon. The bot supports the offline **Demo Forge** mode and the fake reference site at `https://planet-forge.com`.
+A Telegram-controlled game pilot for the hackathon. It requests a **unique play code**, starts a per-user session, reads structured game state, chooses the next action, collects resources, upgrades progression, and keeps playing until the user sends `/stop`.
 
-## Safety and scope
+## Important reference-site finding
 
-Use the demo or the hackathon reference site only. Never commit `.env`, generated state, session cookies, private keys, or Telegram tokens. External mode uses a real Solana Ed25519 key supplied through `SOLANA_PRIVATE_KEY`; the private key stays local, while the bot sends only the public address and the 64-byte signature over Planet Forge's one-time nonce.
+The supplied [StonkScape reference site](https://play.stonkscape.com/rs2.cgi) is a browser-rendered WebAssembly client. The page exposes a canvas and the client connects to the game server using a binary WebSocket protocol; it does **not** expose documented `/play-code`, `/state`, or `/action` JSON endpoints. This repository therefore does not fake those endpoints or scrape credentials.
 
-## Commands
+The bot includes a `StonkScapeBridgeAdapter` with a small JSON contract. An organizer-authorized browser worker or test harness can implement the bridge while the Telegram bot handles user sessions, policy, persistence, and notifications. This separation makes the implementation honest, testable, and easy to connect to the hackathon's approved game interface.
 
-- `/start` — authenticate the configured pilot and initialize the current target.
-- `/target demo` — select the offline demo.
-- `/target https://your-authorized-test-harness.example` — select an external target for this user and clear the old session.
-- `/play` — start the per-user mining loop.
-- `/stop` — stop the loop gracefully.
-- `/status` — show the current target and latest game state.
+## Telegram commands
 
-Each user has an independent persisted target. Selecting a target stops the current loop and requires `/start` before `/play`.
+- `/start` — request or reuse the user's unique play code and initialize a session.
+- `/play` — start the autonomous loop.
+- `/stop` — cancel the user's loop safely.
+- `/status` — show score, resources, ship, rank, upgrades, and target.
+- `/target demo` — use the offline deterministic game for judging and local development.
+- `/target https://...` — select an authorized bridge-backed target.
 
-## Run locally
+Each Telegram user has an independent persisted state. The loop is cancellable, errors pause the user rather than crashing the whole bot, and no payment or wallet secret is sent to Telegram.
+
+## Local demo
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 cp .env.example .env
-# set TELEGRAM_BOT_TOKEN and the game variables below
+# set TELEGRAM_BOT_TOKEN
 python -m bot
 ```
 
-## Railway deployment
+The default `GAME_MODE=demo` works without a game account or external service. It is the safest way to demonstrate the complete `/start` → `/play` → `/status` → `/stop` flow.
 
-Railway can deploy this repository directly. Current Railway Railpack uses `requirements.txt` and `railpack.json`, with the `Procfile` as a fallback; the service is a long-running Telegram polling worker, not an HTTP web service. The configured start command is `python -m bot`, and the added `bot/__main__.py` makes that module invocation valid.
+## Authorized StonkScape bridge mode
 
-Create a Railway service from the GitHub repository, add the variables below, and deploy from `main`. Do not set a port or run `uvicorn`; Telegram polling does not require an inbound HTTP port.
-
-For persistent user sessions, attach a Railway Volume mounted at `/app/data` and set `STATE_FILE=/app/data/state.json`. Without a volume, the bot still runs but its local user/session state can be lost whenever Railway replaces the container.
-
-Required variables for the real reference site:
+Set these variables only when the hackathon organizer provides an authorized bridge:
 
 ```text
-TELEGRAM_BOT_TOKEN=<Telegram BotFather token>
-GAME_MODE=external
-GAME_BASE_URL=https://planet-forge.com
-SOLANA_PRIVATE_KEY=<base58, hex, or JSON-array Solana secret key; store as a Railway secret>
-PLANET_FORGE_APP_ID=6a845b273cbe45715e037048
-STATE_FILE=/app/data/state.json
+TELEGRAM_BOT_TOKEN=<BotFather token>
+GAME_MODE=stonkscape
+GAME_BASE_URL=https://play.stonkscape.com/rs2.cgi
+STONKSCAPE_BRIDGE_URL=https://your-authorized-bridge.example
+STATE_FILE=./data/state.json
 POLL_SECONDS=2
 ```
 
-For an offline deployment, use `GAME_MODE=demo` and omit `SOLANA_PRIVATE_KEY`; the other variables can remain configured. Never commit or print the private key.
+The bridge contract is:
 
-## Targets
+| Request | JSON body or query | Response |
+|---|---|---|
+| `POST /play-code` | `telegram_user_id`, `reference_url` | `{ "play_code": "..." }` |
+| `POST /session` | above plus `play_code` | `{ "session_id": "..." }` |
+| `GET /state` | above plus `play_code`, `session_id` | `GameState` or `{ "state": GameState }` |
+| `POST /action` | above plus `action` | `GameState` or `{ "state": GameState }` |
+| `POST /upgrade` | above plus `play_code`, `session_id` | `GameState` or `{ "state": GameState }` |
 
-Set `GAME_MODE=external`, `GAME_BASE_URL=https://planet-forge.com`, and `SOLANA_PRIVATE_KEY` in `.env`. The adapter mirrors the reference browser client: `authNonce` → local Ed25519 signature → `authVerify`, then authenticated `playerState`, `catalog`, `startRun`, `runHeartbeat`, and `completeLevel` function calls at `/api/apps/6a845b273cbe45715e037048/functions/<name>`. Optional `equipItem` and `craftItem` helpers use the same authenticated function client. There are deliberately no `/api/play-code`, `/api/session`, `/api/state`, or `/api/action` calls.
+`GameState` contains `score`, `resources`, `position`, `ship`, `rank`, `upgrades`, `cooldown_seconds`, `alive`, and `game_over`. The bridge must enforce the organizer's authorization and must never accept Telegram-supplied credentials as a substitute for its own game authentication.
 
-The bot selects the highest normal sector unlocked by XP, sends browser-compatible 30-second heartbeat input counts while its rotate-and-shoot policy runs, confirms the mission result, and automatically enters the next sector. It keeps doing this until `/stop`. Every 30 seconds it also evaluates materials and ship progression. When a craft is affordable it obtains a quote; when a better ship is not craftable it reports a buy recommendation. It does **not** silently submit a Solana payment transaction from the pilot wallet.
+## Deployment
 
-## `/site` wallet companion
+This is a long-running Telegram polling worker. Deploy it as a worker on Railway, Render, Fly.io, or another service that keeps a process online. Do not expose a public HTTP port for polling. Mount persistent storage for `STATE_FILE` if user sessions must survive redeployments.
 
-Use Phantom, Solflare, or Backpack to create/hold the pilot wallet, export its secret key in the wallet's supported JSON/base58 format, and set it locally as `SOLANA_PRIVATE_KEY`. Do not paste it into Telegram or commit it. The bot performs the same nonce-signing operation as the browser flow without attempting to automate a browser extension.
+For a free, simple hackathon demo, run the offline mode locally or on a worker with `GAME_MODE=demo`. For 24/7 hosting, use an always-on worker; the exact cost depends on the provider and plan. Keep `TELEGRAM_BOT_TOKEN`, bridge credentials, and any game credentials in server-side secrets, never in Git.
 
 ## Tests
 
 ```bash
 python -m pytest -q
 python -m compileall -q bot scripts tests
-node --check site/app.js
 ```
 
-The test suite covers target validation, the controller policy, the Planet Forge adapter, and the demo adapter. GitHub Actions and the Railway-equivalent local checks run the same tests and static checks.
+The tests cover target validation, the controller policy, deterministic demo progression, legacy adapter planning, and StonkScape bridge response parsing.

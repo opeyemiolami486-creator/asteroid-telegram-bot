@@ -1,4 +1,8 @@
 import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bot.game_adapter import DemoGameAdapter
 from bot.models import UserState, Wallet

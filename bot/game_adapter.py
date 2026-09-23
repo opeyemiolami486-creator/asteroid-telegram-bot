@@ -350,19 +350,28 @@ class DemoGameAdapter(GameAdapter):
 
 
 class SelectableGameAdapter(GameAdapter):
-    """Select demo or Planet Forge from each user's persisted target."""
-
-    def __init__(self, default_target: str, signer: SolanaSigner | None = None, **external_options: str) -> None:
+    """Select demo, StonkScape, or the legacy Planet Forge adapter."""
+    def __init__(self, default_target: str, signer: SolanaSigner | None = None, game_mode: str = "external", bridge_url: str = "", **external_options: str) -> None:
         self.default_target = normalize_target(default_target)
         self.demo = DemoGameAdapter()
         self.signer = signer
+        self.game_mode = game_mode.lower()
+        self.bridge_url = bridge_url
         self.external_options = external_options
         self.external: dict[str, PlanetForgeAdapter] = {}
+        self.stonkscape: dict[str, GameAdapter] = {}
 
     def _adapter(self, user: UserState) -> GameAdapter:
         target = normalize_target(user.target_url or self.default_target)
         if target == "demo":
             return self.demo
+        if self.game_mode == "stonkscape":
+            if not self.bridge_url:
+                raise RuntimeError("STONKSCAPE_BRIDGE_URL is required for StonkScape mode; the public page is a WebAssembly client, not a JSON API")
+            if target not in self.stonkscape:
+                from .stonkscape import StonkScapeBridgeAdapter
+                self.stonkscape[target] = StonkScapeBridgeAdapter(self.bridge_url, target)
+            return self.stonkscape[target]
         if self.signer is None:
             raise RuntimeError("Planet Forge mode requires SOLANA_PRIVATE_KEY")
         if target not in self.external:
