@@ -88,7 +88,7 @@ def build_app() -> Application:
             await update.message.reply_text(
                 "Usage: /target demo\n"
                 "or: /target https://your-authorized-test-harness.example\n\n"
-                "The target must implement the JSON contract documented in README.md."
+                "The target must be an authorized JSON integration configured for this bot."
             )
             return
         try:

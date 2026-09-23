@@ -6,7 +6,7 @@ Telegram-controlled asteroid-mining game runner for the hackathon. In the defaul
 
 Use this repository only with the built-in demo or an isolated, authorized test harness that you control. Do not point it at a real game, exchange, wallet, or account. Never commit `.env`, generated state, session cookies, private keys, or Telegram tokens. The generated wallet record is a local demo placeholder, not a Solana wallet and not suitable for real funds.
 
-The bot can connect to a website only when that website exposes the documented JSON test-harness contract below. It cannot automate an arbitrary HTML page, wallet extension, CAPTCHA, or undocumented frontend API.
+The bot can connect only to an authorized integration that is compatible with the configured adapter. It cannot automate an arbitrary HTML page, wallet extension, CAPTCHA, or undocumented frontend API.
 
 ## Commands
 
@@ -30,22 +30,11 @@ cp .env.example .env
 python -m bot
 ```
 
-## Targets and JSON contract
+## Targets
 
 The default is `GAME_MODE=demo`. To configure the default external target instead, set `GAME_MODE=external` and `GAME_BASE_URL` in `.env`. A user can override that default at any time with `/target <absolute-http(s)-url>`.
 
-The external target is expected to expose these endpoints relative to the selected base URL:
-
-| Method | Default path | Request | Required response |
-|---|---|---|---|
-| POST | `/api/play-code` | `{ "user_id": 123, "wallet_address": "..." }` | `{ "play_code": "..." }` |
-| POST | `/api/session` | `{ "user_id": 123, "play_code": "...", "wallet_address": "..." }` | `{ "session_id": "..." }` |
-| GET | `/api/state` | query `session_id=...` | game-state object or `{ "state": { ... } }` |
-| POST | `/api/action` | `{ "session_id": "...", "action": "fire" }` | game-state object or `{ "state": { ... } }` |
-
-A game-state object may contain `score`, `resources`, `position`, `ship`, `rank`, `upgrades`, `cooldown_seconds`, `alive`, and `game_over`. Unknown fields are preserved in `raw`. The upgrade action is sent as `action: "upgrade"`.
-
-Override paths with `GAME_PLAY_CODE_ENDPOINT`, `GAME_SESSION_ENDPOINT`, `GAME_STATE_ENDPOINT`, and `GAME_ACTION_ENDPOINT`. The adapter follows redirects, requires JSON responses, reports HTTP errors clearly, and never treats an HTML page as a successful API response.
+The external adapter is intentionally kept separate from the demo implementation. Supply an authorized target and its integration details through the runtime configuration; the adapter follows redirects, requires JSON responses, reports HTTP errors clearly, and never treats an HTML page as a successful API response.
 
 ## `/site` wallet companion
 

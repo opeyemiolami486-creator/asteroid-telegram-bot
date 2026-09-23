@@ -47,13 +47,10 @@ def normalize_target(value: str) -> str:
 
 
 class ExternalJsonGameAdapter(GameAdapter):
-    """Adapter for an authorized JSON test harness with a small documented contract.
+    """Adapter for an authorized JSON game integration.
 
-    Endpoints are relative to ``base_url``. The harness should return JSON containing
-    ``play_code`` from POST play-code, ``session_id`` from POST session, and a game
-    state object from GET state and POST action. State fields match GameState; unknown
-    fields are preserved in ``raw``. The session ID is sent as a ``session_id`` query
-    parameter for GET state and in the JSON body for POST action.
+    Endpoints are relative to ``base_url``. State fields match GameState; unknown
+    fields are preserved in ``raw``.
     """
 
     def __init__(
@@ -92,7 +89,7 @@ class ExternalJsonGameAdapter(GameAdapter):
             content_type = response.headers.get("content-type", "unknown")
             raise RuntimeError(
                 f"{method} {path} returned non-JSON content ({content_type}); "
-                "check the endpoint paths and test-harness contract"
+                "check the endpoint paths and target configuration"
             ) from exc
         if not isinstance(payload, dict):
             raise RuntimeError(f"{method} {path} must return a JSON object")
