@@ -24,9 +24,31 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 cp .env.example .env
-# set TELEGRAM_BOT_TOKEN
+# set TELEGRAM_BOT_TOKEN and the game variables below
 python -m bot
 ```
+
+## Railway deployment
+
+Railway can deploy this repository directly. Current Railway Railpack uses `requirements.txt` and `railpack.json`, with the `Procfile` as a fallback; the service is a long-running Telegram polling worker, not an HTTP web service. The configured start command is `python -m bot`, and the added `bot/__main__.py` makes that module invocation valid.
+
+Create a Railway service from the GitHub repository, add the variables below, and deploy from `main`. Do not set a port or run `uvicorn`; Telegram polling does not require an inbound HTTP port.
+
+For persistent user sessions, attach a Railway Volume mounted at `/app/data` and set `STATE_FILE=/app/data/state.json`. Without a volume, the bot still runs but its local user/session state can be lost whenever Railway replaces the container.
+
+Required variables for the real reference site:
+
+```text
+TELEGRAM_BOT_TOKEN=<Telegram BotFather token>
+GAME_MODE=external
+GAME_BASE_URL=https://planet-forge.com
+SOLANA_PRIVATE_KEY=<base58, hex, or JSON-array Solana secret key; store as a Railway secret>
+PLANET_FORGE_APP_ID=6a845b273cbe45715e037048
+STATE_FILE=/app/data/state.json
+POLL_SECONDS=2
+```
+
+For an offline deployment, use `GAME_MODE=demo` and omit `SOLANA_PRIVATE_KEY`; the other variables can remain configured. Never commit or print the private key.
 
 ## Targets
 
@@ -46,4 +68,4 @@ python -m compileall -q bot scripts tests
 node --check site/app.js
 ```
 
-The test suite covers target validation, the controller policy, and the demo adapter. GitHub Actions runs the same tests and static checks.
+The test suite covers target validation, the controller policy, the Planet Forge adapter, and the demo adapter. GitHub Actions and the Railway-equivalent local checks run the same tests and static checks.
