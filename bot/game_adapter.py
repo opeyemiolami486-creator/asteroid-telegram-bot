@@ -127,21 +127,37 @@ class PlanetForgeAdapter(GameAdapter):
         if not isinstance(data, dict):
             raise RuntimeError("Planet Forge state response must contain a JSON object")
         player = data.get("player", {}) if isinstance(data.get("player", {}), dict) else {}
-        resources = data.get("resources", data.get("materials", {}))
+        inventory = data.get("inventory", []) if isinstance(data.get("inventory", []), list) else []
+        resources = data.get("resources") or data.get("materials") or {}
         if not isinstance(resources, dict):
             resources = {}
+        # playerState stores materials as inventory rows, not a resources map.
+        # Keep any explicit server map, then fill missing quantities from rows.
+        resources = dict(resources)
+        for item in inventory:
+            if isinstance(item, dict) and item.get("itemKind") == "material" and item.get("itemId"):
+                resources[str(item["itemId"])] = int(item.get("quantity", 0) or 0)
+        xp = int(data.get("score", data.get("xp", player.get("xp", 0))) or 0)
+        player_level = player.get("level", player.get("rank"))
+        rank = int(data.get("rank", player_level if player_level is not None else player.get("sectorClears", 0)) or 0)
+        equipped_id = player.get("equippedShipId")
+        equipped = next((item for item in inventory if isinstance(item, dict) and item.get("itemKind") == "ship" and item.get("itemId") == equipped_id), None)
+        ship = data.get("ship") or (equipped or {}).get("itemId") or equipped_id or "unknown"
+        upgrades = data.get("upgrades") or player.get("upgrades") or {}
+        if not isinstance(upgrades, dict):
+            upgrades = {}
         excluded = {"player", "inventory", "score", "resources", "materials", "position", "ship", "rank", "upgrades", "cooldown_seconds", "dead", "game_over"}
         return GameState(
-            score=int(data.get("score", player.get("xp", 0))),
-            resources=dict(resources),
+            score=xp,
+            resources=resources,
             position=dict(data.get("position", {})) if isinstance(data.get("position", {}), dict) else {},
-            ship=str(data.get("ship", player.get("equippedShipId", "unknown"))),
-            rank=int(data.get("rank", player.get("level", 0))),
-            upgrades=dict(data.get("upgrades", {})) if isinstance(data.get("upgrades", {}), dict) else {},
+            ship=str(ship),
+            rank=rank,
+            upgrades=dict(upgrades),
             cooldown_seconds=float(data.get("cooldown_seconds", 0.0)),
             alive=not bool(data.get("dead", False)),
             game_over=bool(data.get("game_over", False)),
-            raw={"player": player, "inventory": data.get("inventory", []), **{key: value for key, value in data.items() if key not in excluded}},
+            raw={"player": player, "inventory": inventory, **{key: value for key, value in data.items() if key not in excluded}},
         )
 
     async def request_play_code(self, user: UserState) -> str:

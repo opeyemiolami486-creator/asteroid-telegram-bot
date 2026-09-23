@@ -36,6 +36,21 @@ def test_economy_plan_recommends_buy_when_materials_are_missing():
     assert plan["itemId"] == "vulture"
 
 
+def test_state_maps_live_player_state_inventory_and_xp():
+    state = PlanetForgeAdapter._state({
+        "player": {"xp": 1234, "level": 4, "equippedShipId": "ship-blueprint"},
+        "inventory": [
+            {"itemKind": "material", "itemId": "iron", "quantity": 87},
+            {"itemKind": "material", "itemId": "silver", "quantity": 12},
+            {"itemKind": "ship", "itemId": "ship-blueprint", "id": "ship-inventory-row"},
+        ],
+    })
+    assert state.score == 1234
+    assert state.rank == 4
+    assert state.resources == {"iron": 87, "silver": 12}
+    assert state.ship == "ship-blueprint"
+
+
 @pytest.mark.asyncio
 async def test_restart_chooses_highest_normal_level_unlocked_by_xp(adapter, monkeypatch):
     user = UserState(1, Wallet(adapter.signer.address, "00" * 32))
