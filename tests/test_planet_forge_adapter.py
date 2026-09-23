@@ -142,3 +142,19 @@ async def test_invalid_heartbeat_restarts_run_and_keeps_tick_alive(adapter, monk
     assert user.session_id == "fresh-run"
     assert adapter._runs[user.telegram_user_id]["run_id"] == "fresh-run"
     assert [name for name, _ in calls] == ["runHeartbeat", "playerState", "catalog", "startRun", "playerState"]
+
+
+@pytest.mark.asyncio
+async def test_daily_reward_is_optional_and_throttled(adapter, monkeypatch):
+    user = UserState(3, Wallet(adapter.signer.address, "00" * 32))
+    calls = []
+
+    async def invoke(function, _user, **args):
+        calls.append(function)
+        return {"claimed": True, "reward": {"metal": 25}}
+
+    monkeypatch.setattr(adapter, "_invoke", invoke)
+
+    assert await adapter.claim_daily_reward(user) == "daily reward claimed: {'metal': 25}"
+    assert await adapter.claim_daily_reward(user) is None
+    assert calls == ["claimDailyReward"]

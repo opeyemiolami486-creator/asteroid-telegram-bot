@@ -20,6 +20,7 @@ class GameController:
         self.poll_seconds = poll_seconds
         self.tasks: dict[int, asyncio.Task[None]] = {}
         self.action_phase: dict[int, int] = {}
+        self.high_scores: dict[int, int] = {}
 
     async def prepare(self, user: UserState) -> str:
         user.play_code = await self.adapter.request_play_code(user)
@@ -59,12 +60,16 @@ class GameController:
                         if not waiting_for_repairs:
                             await self.notify(user.telegram_user_id, "Ship is in repairs; waiting and will resume automatically when ready")
                             waiting_for_repairs = True
+                        reward = await self.adapter.claim_daily_reward(user)
+                        if reward:
+                            await self.notify(user.telegram_user_id, reward)
                         await asyncio.sleep(max(self.poll_seconds, 5.0))
                         continue
                 state = await self.adapter.read_state(user)
                 user.last_game = state
                 self.store.put(user)
                 await self.notify(user.telegram_user_id, self._summary(user, "progress"))
+                await self._notify_major_events(user, state)
                 if state.game_over or not state.alive:
                     summary = self._summary(user, "sector complete")
                     try:
@@ -74,6 +79,9 @@ class GameController:
                         if not waiting_for_repairs:
                             await self.notify(user.telegram_user_id, "Ship is in repairs; waiting before the next sector")
                             waiting_for_repairs = True
+                        reward = await self.adapter.claim_daily_reward(user)
+                        if reward:
+                            await self.notify(user.telegram_user_id, reward)
                         await asyncio.sleep(max(self.poll_seconds, 5.0))
                         continue
                     if next_session:
@@ -97,6 +105,7 @@ class GameController:
                 user.last_game = state
                 self.store.put(user)
                 await self.notify(user.telegram_user_id, self._summary(user, "progress"))
+                await self._notify_major_events(user, state)
                 await self._sleep_with_countdown(user, state.cooldown_seconds)
         except asyncio.CancelledError:
             raise
@@ -124,6 +133,13 @@ class GameController:
                 break
             await self.notify(user.telegram_user_id, f"cooldown: {math.ceil(remaining)}s remaining")
             await asyncio.sleep(min(max(self.poll_seconds, 0.1), remaining))
+
+    async def _notify_major_events(self, user: UserState, state: GameState) -> None:
+        previous = self.high_scores.get(user.telegram_user_id, 0)
+        if state.score > previous and state.score > 0:
+            self.high_scores[user.telegram_user_id] = state.score
+            if previous > 0:
+                await self.notify(user.telegram_user_id, f"high score: {state.score} points")
 
     @staticmethod
     def _choose_action(state):

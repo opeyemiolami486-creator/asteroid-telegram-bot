@@ -47,6 +47,10 @@ class GameAdapter(ABC):
         """Inspect long-lived progression and optionally perform safe maintenance."""
         return None
 
+    async def claim_daily_reward(self, user: UserState) -> str | None:
+        """Claim an available daily reward; unsupported targets safely do nothing."""
+        return None
+
 
 class PlanetForgeInvalidRunError(RuntimeError):
     """Raised when Planet Forge has expired or invalidated the active run."""
@@ -101,6 +105,7 @@ class PlanetForgeAdapter(GameAdapter):
         self.anonymous_id = str(uuid.uuid4())
         self._runs: dict[int, dict] = {}
         self._last_maintenance: dict[int, float] = {}
+        self._last_reward_claim: dict[int, float] = {}
 
     def _url(self, function: str) -> str:
         return f"{self.base_url}/api/apps/{self.app_id}/functions/{function}"
@@ -345,6 +350,21 @@ class PlanetForgeAdapter(GameAdapter):
             return f"buy-recommended {plan['name']} (materials not yet available; no SOL purchase sent)"
         return None
 
+    async def claim_daily_reward(self, user: UserState) -> str | None:
+        now = time.monotonic()
+        if now - self._last_reward_claim.get(user.telegram_user_id, 0) < 300:
+            return None
+        self._last_reward_claim[user.telegram_user_id] = now
+        try:
+            result = await self._invoke("claimDailyReward", user)
+        except Exception:
+            # Optional maintenance must never stop the gameplay or repair loop.
+            return None
+        if result.get("claimed") is False or result.get("available") is False:
+            return None
+        reward = result.get("reward") or result.get("bonus") or result.get("rewards")
+        return f"daily reward claimed{f': {reward}' if reward else ''}"
+
 
 ExternalJsonGameAdapter = PlanetForgeAdapter
 
@@ -484,3 +504,6 @@ class SelectableGameAdapter(GameAdapter):
 
     async def maintain(self, user: UserState) -> str | None:
         return await self._adapter(user).maintain(user)
+
+    async def claim_daily_reward(self, user: UserState) -> str | None:
+        return await self._adapter(user).claim_daily_reward(user)
