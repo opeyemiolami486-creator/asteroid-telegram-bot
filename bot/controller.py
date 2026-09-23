@@ -147,9 +147,41 @@ class GameController:
             return "wait"
         return "fire"
 
+    @staticmethod
+    def _target_bearing(state) -> float | None:
+        """Return the server-reported target bearing, if one is available.
+
+        Planet Forge preview payloads have used both a flat ``targetBearing``
+        field and nested target objects.  Keeping this parser tolerant lets the
+        policy aim when telemetry exists without pretending that a REST client
+        can see the canvas when it does not.
+        """
+        raw = state.raw if isinstance(state.raw, dict) else {}
+        candidates = [raw.get("targetBearing"), raw.get("target_bearing"), raw.get("bearing")]
+        for key in ("target", "nearestTarget", "nearest_target", "asteroid"):
+            target = raw.get(key)
+            if isinstance(target, dict):
+                candidates.extend((target.get("bearing"), target.get("angle"), target.get("targetBearing")))
+        for value in candidates:
+            try:
+                if value is not None:
+                    return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
     def _next_action(self, user: UserState, state):
         if state.cooldown_seconds > 0:
             return "wait"
+        bearing = self._target_bearing(state)
+        if bearing is not None:
+            # Normalize degrees to the shortest signed turn.  A small deadband
+            # prevents oscillating around a target and makes the next shot use
+            # the server's own target alignment rather than blind rotation.
+            bearing = (bearing + 180.0) % 360.0 - 180.0
+            if abs(bearing) <= 8.0:
+                return "fire"
+            return "rotate_left" if bearing < 0 else "rotate_right"
         phase = self.action_phase.get(user.telegram_user_id, 0)
         self.action_phase[user.telegram_user_id] = phase + 1
         return ("rotate_left", "fire", "rotate_right", "fire")[phase % 4]

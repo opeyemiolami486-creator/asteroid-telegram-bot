@@ -60,6 +60,10 @@ class PlanetForgeShipRepairError(RuntimeError):
     """Raised when the equipped ship cannot start a run while being repaired."""
 
 
+class PlanetForgePreviewBranchMissingError(RuntimeError):
+    """Raised when the preview server discarded the branch for an otherwise known run."""
+
+
 def normalize_target(value: str) -> str:
     target = value.strip()
     if target.lower() in {"demo", "local", "offline"}:
@@ -129,6 +133,10 @@ class PlanetForgeAdapter(GameAdapter):
                 raise PlanetForgeShipRepairError(
                     "Planet Forge ship is in repairs; waiting for it to be ready"
                 ) from exc
+            if exc.response.status_code >= 500 and "preview branch not found" in body.lower():
+                raise PlanetForgePreviewBranchMissingError(
+                    "Planet Forge preview branch is no longer available; advancing to a fresh run"
+                ) from exc
             raise RuntimeError(f"Planet Forge {function} returned HTTP {exc.response.status_code}: {body}") from exc
         except httpx.HTTPError as exc:
             raise RuntimeError(f"could not reach external target {self.base_url}: {exc}") from exc
@@ -178,7 +186,10 @@ class PlanetForgeAdapter(GameAdapter):
         for item in inventory:
             if isinstance(item, dict) and item.get("itemKind") == "material" and item.get("itemId"):
                 resources[str(item["itemId"])] = PlanetForgeAdapter._integer(item.get("quantity", 0))
-        xp = PlanetForgeAdapter._integer(data.get("score", data.get("xp", player.get("xp", 0))))
+        progression = data.get("progression", {}) if isinstance(data.get("progression", {}), dict) else {}
+        xp = PlanetForgeAdapter._integer(
+            data.get("score", data.get("xp", progression.get("score", player.get("xp", 0))))
+        )
         player_level = player.get("level", player.get("rank"))
         rank = PlanetForgeAdapter._integer(data.get("rank", player_level if player_level is not None else player.get("sectorClears", 0)))
         equipped_id = player.get("equippedShipId")
@@ -197,7 +208,7 @@ class PlanetForgeAdapter(GameAdapter):
             cooldown = max(0.0, cooldown - PlanetForgeAdapter._number(reduction))
         except (TypeError, ValueError):
             cooldown = max(0.0, cooldown)
-        excluded = {"player", "inventory", "score", "resources", "materials", "position", "ship", "rank", "upgrades", "cooldown_seconds", "dead", "game_over"}
+        excluded = {"player", "inventory", "score", "xp", "progression", "resources", "materials", "position", "ship", "rank", "upgrades", "cooldown_seconds", "dead", "game_over"}
         return GameState(
             score=xp,
             resources=resources,
@@ -247,7 +258,13 @@ class PlanetForgeAdapter(GameAdapter):
         payload = await self._invoke("playerState", user)
         run = self._runs.get(user.telegram_user_id)
         if run and not run["completed"] and time.monotonic() - run["started_at"] >= run["duration"]:
-            await self._complete(user, run, survived=True)
+            try:
+                await self._complete(user, run, survived=True)
+            except PlanetForgePreviewBranchMissingError:
+                # Preview runs can be garbage-collected while the bot is paused.
+                # Treat that as a completed run so the controller can start a new
+                # one instead of stopping forever on an unrecoverable 500.
+                run["completed"] = True
             payload["game_over"] = True
         return self._state(payload)
 
@@ -262,7 +279,18 @@ class PlanetForgeAdapter(GameAdapter):
         now = time.monotonic()
         if now - run["last_heartbeat"] >= 30:
             try:
-                await self._invoke("runHeartbeat", user, runId=run["run_id"], heartbeatToken=run["heartbeat_token"], kills=run["kills"], inputs=run["inputs"])
+                shots = run["inputs"]
+                await self._invoke(
+                    "runHeartbeat",
+                    user,
+                    runId=run["run_id"],
+                    heartbeatToken=run["heartbeat_token"],
+                    kills=run["kills"],
+                    hits=run["kills"],
+                    shots=shots,
+                    inputs=run["inputs"],
+                    accuracy=(run["kills"] / shots if shots else 0.0),
+                )
             except PlanetForgeInvalidRunError:
                 # A run can expire server-side while the bot is paused, redeployed,
                 # or between ticks.  Do not stop the user's loop for that expected
@@ -276,7 +304,16 @@ class PlanetForgeAdapter(GameAdapter):
     async def _complete(self, user: UserState, run: dict, survived: bool) -> dict:
         if run["completed"]:
             return {}
-        result = {"timeMs": int((time.monotonic() - run["started_at"]) * 1000), "kills": run["kills"], "materials": {}, "survived": survived}
+        shots = run["inputs"]
+        result = {
+            "timeMs": int((time.monotonic() - run["started_at"]) * 1000),
+            "kills": run["kills"],
+            "hits": run["kills"],
+            "shots": shots,
+            "accuracy": (run["kills"] / shots if shots else 0.0),
+            "materials": {},
+            "survived": survived,
+        }
         payload = await self._invoke("completeLevel", user, levelId=run["level_id"], shipInvId=run["ship_inv_id"], runId=run["run_id"], result=result)
         run["completed"] = True
         return payload
@@ -352,7 +389,7 @@ class PlanetForgeAdapter(GameAdapter):
 
     async def claim_daily_reward(self, user: UserState) -> str | None:
         now = time.monotonic()
-        if now - self._last_reward_claim.get(user.telegram_user_id, 0) < 300:
+        if now - self._last_reward_claim.get(user.telegram_user_id, -300) < 300:
             return None
         self._last_reward_claim[user.telegram_user_id] = now
         try:

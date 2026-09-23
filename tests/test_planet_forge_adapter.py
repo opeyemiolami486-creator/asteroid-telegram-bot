@@ -1,6 +1,6 @@
 import pytest
 
-from bot.game_adapter import PlanetForgeAdapter, PlanetForgeInvalidRunError
+from bot.game_adapter import PlanetForgeAdapter, PlanetForgeInvalidRunError, PlanetForgePreviewBranchMissingError
 from bot.models import UserState, Wallet
 from bot.wallet import SolanaWalletProvider
 
@@ -158,3 +158,47 @@ async def test_daily_reward_is_optional_and_throttled(adapter, monkeypatch):
     assert await adapter.claim_daily_reward(user) == "daily reward claimed: {'metal': 25}"
     assert await adapter.claim_daily_reward(user) is None
     assert calls == ["claimDailyReward"]
+
+
+@pytest.mark.asyncio
+async def test_missing_preview_branch_completes_as_recoverable_run(adapter, monkeypatch):
+    user = UserState(4, Wallet(adapter.signer.address, "00" * 32))
+    adapter._runs[user.telegram_user_id] = {
+        "run_id": "preview-run", "heartbeat_token": "hb", "level_id": "one",
+        "ship_inv_id": "ship-inv", "started_at": 0.0, "duration": 0.0,
+        "kills": 3, "inputs": 4, "last_heartbeat": 0.0, "completed": False,
+    }
+
+    async def invoke(function, _user, **args):
+        if function == "completeLevel":
+            raise PlanetForgePreviewBranchMissingError("preview branch not found")
+        return {"score": 42}
+
+    monkeypatch.setattr(adapter, "_invoke", invoke)
+    state = await adapter.read_state(user)
+
+    assert state.game_over
+    assert adapter._runs[user.telegram_user_id]["completed"]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_includes_shot_hit_and_accuracy_telemetry(adapter, monkeypatch):
+    user = UserState(5, Wallet(adapter.signer.address, "00" * 32))
+    adapter._runs[user.telegram_user_id] = {
+        "run_id": "run", "heartbeat_token": "hb", "level_id": "one",
+        "ship_inv_id": "ship-inv", "started_at": 9999999999.0, "duration": 90.0,
+        "kills": 0, "inputs": 0, "last_heartbeat": 0.0, "completed": False,
+    }
+    calls = []
+
+    async def invoke(function, _user, **args):
+        calls.append((function, args))
+        return {"score": 10}
+
+    monkeypatch.setattr(adapter, "_invoke", invoke)
+    await adapter.submit_action(user, "fire")
+
+    assert calls[0][0] == "runHeartbeat"
+    assert calls[0][1]["shots"] == 1
+    assert calls[0][1]["hits"] == 1
+    assert calls[0][1]["accuracy"] == 1.0

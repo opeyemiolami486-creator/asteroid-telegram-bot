@@ -20,6 +20,8 @@ The bot includes a `StonkScapeBridgeAdapter` with a small JSON contract. An orga
 
 Each Telegram user has an independent persisted state. The loop is cancellable, errors pause the user rather than crashing the whole bot, and no payment or wallet secret is sent to Telegram.
 
+Planet Forge preview runs are treated as disposable: if the service returns `Preview branch not found` while completing a run, the bot marks that run finished and advances to a fresh sector instead of pausing. When the target provides a target bearing, the controller turns toward it within an 8-degree deadband before firing. Heartbeats and completion payloads also include `shots`, `hits`, and `accuracy` telemetry. The public Planet Forge endpoint does not expose a documented REST endpoint for rendering or physically firing at canvas asteroids, so authoritative score increases still depend on the target accepting and applying that telemetry; the bot does not fabricate local score.
+
 ## Local demo
 
 ```bash
