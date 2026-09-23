@@ -1,0 +1,1 @@
+"""Asteroid Telegram bot package."""
