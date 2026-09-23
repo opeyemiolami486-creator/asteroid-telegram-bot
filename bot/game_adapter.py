@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import asyncio
 from dataclasses import dataclass
 import hashlib
 import json
@@ -162,32 +163,41 @@ class PlanetForgeAdapter(GameAdapter):
         return max(0, int(round(remaining))) if remaining is not None else None
 
     async def _request(self, function: str, payload: dict) -> dict:
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
-                response = await client.post(
-                    self._url(function),
-                    json=payload,
-                    headers={"Accept": "application/json", "Content-Type": "application/json", "X-Origin-URL": self.base_url + "/", "X-Base44-Anonymous-Id": self.anonymous_id},
-                )
-                response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:300]
-            if exc.response.status_code == 403 and "invalid run" in body.lower():
-                raise PlanetForgeInvalidRunError(
-                    "Planet Forge run is no longer valid; starting a fresh run"
+        url = self._url(function)
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-Origin-URL": self.base_url + "/",
+            "X-Base44-Anonymous-Id": self.anonymous_id,
+        }
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
+                    response = await client.post(url, json=payload, headers=headers)
+                    response.raise_for_status()
+                break
+            except httpx.HTTPStatusError as exc:
+                body = exc.response.text[:300]
+                if exc.response.status_code == 403 and "invalid run" in body.lower():
+                    raise PlanetForgeInvalidRunError("Planet Forge run is no longer valid; starting a fresh run") from exc
+                if exc.response.status_code == 403 and "ship is in repairs" in body.lower():
+                    raise PlanetForgeShipRepairError(
+                        "Planet Forge ship is in repairs; waiting for it to be ready",
+                        remaining_seconds=self._repair_remaining_seconds(body),
+                    ) from exc
+                if exc.response.status_code >= 500 and "preview branch not found" in body.lower():
+                    raise PlanetForgePreviewBranchMissingError(
+                        "Planet Forge preview server discarded the run; advancing to a fresh run"
+                    ) from exc
+                raise RuntimeError(f"Planet Forge {function} returned HTTP {exc.response.status_code}: {body}") from exc
+            except httpx.HTTPError as exc:
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (2**attempt))
+                    continue
+                detail = f"{type(exc).__name__}: {exc}" or type(exc).__name__
+                raise RuntimeError(
+                    f"could not reach Planet Forge function {function} at {url} after 3 attempts ({detail})"
                 ) from exc
-            if exc.response.status_code == 403 and "ship is in repairs" in body.lower():
-                raise PlanetForgeShipRepairError(
-                    "Planet Forge ship is in repairs; waiting for it to be ready",
-                    remaining_seconds=self._repair_remaining_seconds(body),
-                ) from exc
-            if exc.response.status_code >= 500 and "preview branch not found" in body.lower():
-                raise PlanetForgePreviewBranchMissingError(
-                    "Planet Forge preview branch is no longer available; advancing to a fresh run"
-                ) from exc
-            raise RuntimeError(f"Planet Forge {function} returned HTTP {exc.response.status_code}: {body}") from exc
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"could not reach external target {self.base_url}: {exc}") from exc
         try:
             result = response.json()
         except ValueError as exc:
