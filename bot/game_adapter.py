@@ -3,7 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import hashlib
+import json
 import random
+import re
 import time
 import uuid
 from urllib.parse import urlparse
@@ -58,6 +60,10 @@ class PlanetForgeInvalidRunError(RuntimeError):
 
 class PlanetForgeShipRepairError(RuntimeError):
     """Raised when the equipped ship cannot start a run while being repaired."""
+
+    def __init__(self, message: str, remaining_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.remaining_seconds = remaining_seconds
 
 
 class PlanetForgePreviewBranchMissingError(RuntimeError):
@@ -114,6 +120,43 @@ class PlanetForgeAdapter(GameAdapter):
     def _url(self, function: str) -> str:
         return f"{self.base_url}/api/apps/{self.app_id}/functions/{function}"
 
+    @staticmethod
+    def _repair_remaining_seconds(body: str) -> int | None:
+        """Extract a repair countdown from common API error payload shapes."""
+        try:
+            decoded = json.loads(body)
+        except (TypeError, ValueError):
+            decoded = None
+
+        keys = {
+            "remainingSeconds", "repairRemainingSeconds", "repairTimeRemaining",
+            "secondsRemaining", "repairSecondsRemaining", "remaining",
+        }
+
+        def find(value: object) -> float | None:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key in keys:
+                        number = PlanetForgeAdapter._number(item, -1)
+                        if number >= 0:
+                            return number
+                    found = find(item)
+                    if found is not None:
+                        return found
+            elif isinstance(value, list):
+                for item in value:
+                    found = find(item)
+                    if found is not None:
+                        return found
+            return None
+
+        remaining = find(decoded)
+        if remaining is None:
+            match = re.search(r"(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", body, re.IGNORECASE)
+            if match:
+                remaining = float(match.group(1))
+        return max(0, int(round(remaining))) if remaining is not None else None
+
     async def _request(self, function: str, payload: dict) -> dict:
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
@@ -131,7 +174,8 @@ class PlanetForgeAdapter(GameAdapter):
                 ) from exc
             if exc.response.status_code == 403 and "ship is in repairs" in body.lower():
                 raise PlanetForgeShipRepairError(
-                    "Planet Forge ship is in repairs; waiting for it to be ready"
+                    "Planet Forge ship is in repairs; waiting for it to be ready",
+                    remaining_seconds=self._repair_remaining_seconds(body),
                 ) from exc
             if exc.response.status_code >= 500 and "preview branch not found" in body.lower():
                 raise PlanetForgePreviewBranchMissingError(

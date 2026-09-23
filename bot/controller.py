@@ -56,9 +56,9 @@ class GameController:
                         if waiting_for_repairs:
                             await self.notify(user.telegram_user_id, "Ship repairs complete; resuming the game")
                             waiting_for_repairs = False
-                    except PlanetForgeShipRepairError:
+                    except PlanetForgeShipRepairError as exc:
                         if not waiting_for_repairs:
-                            await self.notify(user.telegram_user_id, "Ship is in repairs; waiting and will resume automatically when ready")
+                            await self.notify(user.telegram_user_id, self._repair_message(exc, "waiting and will resume automatically when ready"))
                             waiting_for_repairs = True
                         reward = await self.adapter.claim_daily_reward(user)
                         if reward:
@@ -74,10 +74,10 @@ class GameController:
                     summary = self._summary(user, "sector complete")
                     try:
                         next_session = await self.adapter.restart_session(user)
-                    except PlanetForgeShipRepairError:
+                    except PlanetForgeShipRepairError as exc:
                         user.session_id = None
                         if not waiting_for_repairs:
-                            await self.notify(user.telegram_user_id, "Ship is in repairs; waiting before the next sector")
+                            await self.notify(user.telegram_user_id, self._repair_message(exc, "waiting before the next sector"))
                             waiting_for_repairs = True
                         reward = await self.adapter.claim_daily_reward(user)
                         if reward:
@@ -119,6 +119,15 @@ class GameController:
     @staticmethod
     def _upgrade_available(state) -> bool:
         return bool(state.resources.get("upgrade_tokens", 0) > 0 or state.resources.get("metal", 0) >= 100)
+
+    @staticmethod
+    def _repair_message(error: PlanetForgeShipRepairError, suffix: str) -> str:
+        remaining = error.remaining_seconds
+        if remaining is None:
+            return f"Ship is in repairs; {suffix}"
+        minutes, seconds = divmod(max(0, remaining), 60)
+        estimate = f"approximately {minutes}m {seconds:02d}s" if minutes else f"approximately {seconds}s"
+        return f"Ship is in repairs; {estimate} remaining, {suffix}"
 
     async def _sleep_with_countdown(self, user: UserState, cooldown_seconds: float) -> None:
         """Wait between ticks while reporting the remaining cooldown."""

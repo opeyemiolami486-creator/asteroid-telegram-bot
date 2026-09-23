@@ -1,6 +1,7 @@
 import pytest
 
-from bot.game_adapter import PlanetForgeAdapter, PlanetForgeInvalidRunError, PlanetForgePreviewBranchMissingError
+from bot.game_adapter import PlanetForgeAdapter, PlanetForgeInvalidRunError, PlanetForgePreviewBranchMissingError, PlanetForgeShipRepairError
+from bot.controller import GameController
 from bot.models import UserState, Wallet
 from bot.wallet import SolanaWalletProvider
 
@@ -70,6 +71,15 @@ def test_state_accepts_dictionary_wrapped_numeric_values():
     assert state.rank == 4
     assert state.cooldown_seconds == 3
     assert state.resources == {"iron": 87}
+
+
+def test_repair_error_extracts_remaining_seconds_from_json():
+    assert PlanetForgeAdapter._repair_remaining_seconds('{"error":"ship is in repairs", "remainingSeconds": 125}') == 125
+
+
+def test_repair_message_includes_remaining_time():
+    error = PlanetForgeShipRepairError("repair", remaining_seconds=125)
+    assert GameController._repair_message(error, "waiting") == "Ship is in repairs; approximately 2m 05s remaining, waiting"
 
 
 def test_economy_plan_prefers_cooldown_reduction_when_cost_is_affordable():
