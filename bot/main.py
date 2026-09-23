@@ -11,7 +11,7 @@ from .controller import GameController
 from .game_adapter import SelectableGameAdapter, normalize_target
 from .models import GameState, UserState
 from .store import StateStore
-from .wallet import LocalWalletProvider
+from .wallet import DemoWalletProvider, SolanaWalletProvider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -20,10 +20,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str
     game_mode: str = "demo"
     game_base_url: str = ""
-    game_play_code_endpoint: str = "/api/play-code"
-    game_session_endpoint: str = "/api/session"
-    game_state_endpoint: str = "/api/state"
-    game_action_endpoint: str = "/api/action"
+    solana_private_key: str = ""
+    planet_forge_app_id: str = "6a845b273cbe45715e037048"
     state_file: str = "./data/state.json"
     poll_seconds: float = 2.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -33,19 +31,20 @@ def build_app() -> Application:
     load_dotenv()
     settings = Settings()
     store = StateStore(settings.state_file)
-    wallet_provider = LocalWalletProvider()
     if settings.game_mode.lower() == "demo":
         default_target = "demo"
+        wallet_provider = DemoWalletProvider()
+        signer = None
     elif settings.game_base_url:
         default_target = settings.game_base_url
+        wallet_provider = SolanaWalletProvider(settings.solana_private_key)
+        signer = wallet_provider.signer
     else:
         raise ValueError("GAME_BASE_URL is required when GAME_MODE is not demo")
     adapter = SelectableGameAdapter(
         default_target,
-        play_code_path=settings.game_play_code_endpoint,
-        session_path=settings.game_session_endpoint,
-        state_path=settings.game_state_endpoint,
-        action_path=settings.game_action_endpoint,
+        signer=signer,
+        app_id=settings.planet_forge_app_id,
     )
     app = Application.builder().token(settings.telegram_bot_token).build()
 
@@ -59,6 +58,11 @@ def build_app() -> Application:
         user = store.get(update.effective_user.id)
         if user is None:
             user = UserState(update.effective_user.id, wallet_provider.create())
+            store.put(user)
+        elif signer is not None and user.wallet.address != signer.address:
+            user.wallet = wallet_provider.create()
+            user.play_code = None
+            user.session_id = None
             store.put(user)
         return user
 
@@ -74,8 +78,7 @@ def build_app() -> Application:
                 "Profile ready.\n"
                 f"Target: {user.target_url or default_target}\n"
                 f"Wallet address: {wallet.address}\n"
-                f"Wallet secret (show once; keep private): {wallet.private_key}\n"
-                f"Unique play code: {play_code}\n\n"
+                f"Pilot session: {play_code}\n\n"
                 "Use /play to begin, /status for stats, /target <demo|https://your-test-harness> to switch target, or /stop to halt."
             )
         except Exception as exc:

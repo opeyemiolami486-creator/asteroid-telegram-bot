@@ -1,16 +1,14 @@
 # Asteroid Telegram Bot
 
-Telegram-controlled asteroid-mining game runner for the hackathon. In the default **Demo Forge** mode, each player gets a deterministic play code and an offline session where the bot starts a scrap ship, shatters asteroids, harvests ore and metal, and forges upgrades.
+Telegram-controlled Planet Forge pilot for the hackathon. The bot supports the offline **Demo Forge** mode and the fake reference site at `https://planet-forge.com`.
 
 ## Safety and scope
 
-Use this repository only with the built-in demo or an isolated, authorized test harness that you control. Do not point it at a real game, exchange, wallet, or account. Never commit `.env`, generated state, session cookies, private keys, or Telegram tokens. The generated wallet record is a local demo placeholder, not a Solana wallet and not suitable for real funds.
-
-The bot can connect only to an authorized integration that is compatible with the configured adapter. It cannot automate an arbitrary HTML page, wallet extension, CAPTCHA, or undocumented frontend API.
+Use the demo or the hackathon reference site only. Never commit `.env`, generated state, session cookies, private keys, or Telegram tokens. External mode uses a real Solana Ed25519 key supplied through `SOLANA_PRIVATE_KEY`; the private key stays local, while the bot sends only the public address and the 64-byte signature over Planet Forge's one-time nonce.
 
 ## Commands
 
-- `/start` — initialize the current target and display the play code.
+- `/start` — authenticate the configured pilot and initialize the current target.
 - `/target demo` — select the offline demo.
 - `/target https://your-authorized-test-harness.example` — select an external target for this user and clear the old session.
 - `/play` — start the per-user mining loop.
@@ -32,13 +30,13 @@ python -m bot
 
 ## Targets
 
-The default is `GAME_MODE=demo`. To configure the default external target instead, set `GAME_MODE=external` and `GAME_BASE_URL` in `.env`. A user can override that default at any time with `/target <absolute-http(s)-url>`.
+Set `GAME_MODE=external`, `GAME_BASE_URL=https://planet-forge.com`, and `SOLANA_PRIVATE_KEY` in `.env`. The adapter mirrors the reference browser client: `authNonce` → local Ed25519 signature → `authVerify`, then authenticated `playerState`, `catalog`, `startRun`, `runHeartbeat`, and `completeLevel` function calls at `/api/apps/6a845b273cbe45715e037048/functions/<name>`. Optional `equipItem` and `craftItem` helpers use the same authenticated function client. There are deliberately no `/api/play-code`, `/api/session`, `/api/state`, or `/api/action` calls.
 
-The external adapter is intentionally kept separate from the demo implementation. Supply an authorized target and its integration details through the runtime configuration; the adapter follows redirects, requires JSON responses, reports HTTP errors clearly, and never treats an HTML page as a successful API response.
+The bot chooses the first unlocked catalog level and the player's equipped/first ship, sends heartbeat input counts while its conservative rotate-and-shoot policy runs, and submits the mission result after the level duration. A user can override the target with `/target <absolute-http(s)-url>` when testing an equivalent isolated reference harness.
 
 ## `/site` wallet companion
 
-The `site/` directory is a static, browser-only companion for a manual PlanetForge flow. Serve it locally with `python3 -m http.server 8000 --directory site`, then open `http://localhost:8000`. The page can generate a Solana keypair locally and connect installed wallet providers, but it does not send keys to this bot or automate a website.
+Use Phantom, Solflare, or Backpack to create/hold the pilot wallet, export its secret key in the wallet's supported JSON/base58 format, and set it locally as `SOLANA_PRIVATE_KEY`. Do not paste it into Telegram or commit it. The bot performs the same nonce-signing operation as the browser flow without attempting to automate a browser extension.
 
 ## Tests
 

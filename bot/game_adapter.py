@@ -4,11 +4,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import hashlib
 import random
+import time
+import uuid
 from urllib.parse import urlparse
 
 import httpx
 
 from .models import ActionName, GameState, UserState
+from .wallet import SolanaSigner
 
 
 class GameAdapter(ABC):
@@ -34,7 +37,6 @@ class GameAdapter(ABC):
 
 
 def normalize_target(value: str) -> str:
-    """Validate a user-selected test target and return a canonical value."""
     target = value.strip()
     if target.lower() in {"demo", "local", "offline"}:
         return "demo"
@@ -46,112 +48,151 @@ def normalize_target(value: str) -> str:
     return target.rstrip("/")
 
 
-class ExternalJsonGameAdapter(GameAdapter):
-    """Adapter for an authorized JSON game integration.
+class PlanetForgeAdapter(GameAdapter):
+    """Client for Planet Forge's authenticated Base44 function contract."""
 
-    Endpoints are relative to ``base_url``. State fields match GameState; unknown
-    fields are preserved in ``raw``.
-    """
-
-    def __init__(
-        self,
-        base_url: str,
-        play_code_path: str = "/api/play-code",
-        session_path: str = "/api/session",
-        state_path: str = "/api/state",
-        action_path: str = "/api/action",
-        timeout_seconds: float = 15.0,
-    ) -> None:
+    def __init__(self, base_url: str, signer: SolanaSigner, app_id: str = "6a845b273cbe45715e037048", timeout_seconds: float = 15.0) -> None:
         self.base_url = normalize_target(base_url)
         if self.base_url == "demo":
-            raise ValueError("external adapter requires an http(s) URL")
-        self.play_code_path = play_code_path
-        self.session_path = session_path
-        self.state_path = state_path
-        self.action_path = action_path
+            raise ValueError("Planet Forge adapter requires an http(s) URL")
+        self.signer = signer
+        self.app_id = app_id
         self.timeout_seconds = timeout_seconds
+        self.token: str | None = None
+        self.anonymous_id = str(uuid.uuid4())
+        self._runs: dict[int, dict] = {}
 
-    def _url(self, path: str) -> str:
-        return f"{self.base_url}/{path.lstrip('/')}"
+    def _url(self, function: str) -> str:
+        return f"{self.base_url}/api/apps/{self.app_id}/functions/{function}"
 
-    async def _request(self, method: str, path: str, **kwargs) -> dict:
+    async def _request(self, function: str, payload: dict) -> dict:
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
-                response = await client.request(method, self._url(path), **kwargs)
+                response = await client.post(
+                    self._url(function),
+                    json=payload,
+                    headers={"Accept": "application/json", "Content-Type": "application/json", "X-Origin-URL": self.base_url + "/", "X-Base44-Anonymous-Id": self.anonymous_id},
+                )
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise RuntimeError(f"{method} {path} returned HTTP {exc.response.status_code}") from exc
+            raise RuntimeError(f"Planet Forge {function} returned HTTP {exc.response.status_code}: {exc.response.text[:300]}") from exc
         except httpx.HTTPError as exc:
             raise RuntimeError(f"could not reach external target {self.base_url}: {exc}") from exc
         try:
-            payload = response.json()
+            result = response.json()
         except ValueError as exc:
-            content_type = response.headers.get("content-type", "unknown")
-            raise RuntimeError(
-                f"{method} {path} returned non-JSON content ({content_type}); "
-                "check the endpoint paths and target configuration"
-            ) from exc
-        if not isinstance(payload, dict):
-            raise RuntimeError(f"{method} {path} must return a JSON object")
-        return payload
+            raise RuntimeError(f"Planet Forge {function} returned non-JSON content ({response.headers.get('content-type', 'unknown')})") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Planet Forge {function} must return a JSON object")
+        if result.get("error"):
+            error = result["error"]
+            raise RuntimeError(error.get("message", str(error)) if isinstance(error, dict) else str(error))
+        return result
 
-    @staticmethod
-    def _required(payload: dict, *keys: str) -> str:
-        for key in keys:
-            value = payload.get(key)
-            if value is not None and str(value):
-                return str(value)
-        raise RuntimeError(f"external target response is missing one of: {', '.join(keys)}")
+    async def _ensure_auth(self, user: UserState) -> None:
+        if self.token:
+            return
+        nonce = await self._request("authNonce", {"walletAddress": user.wallet.address})
+        session_id, message = nonce.get("sessionId"), nonce.get("message")
+        if not session_id or not message:
+            raise RuntimeError("Planet Forge authNonce did not return sessionId and message")
+        verified = await self._request(
+            "authVerify",
+            {"sessionId": session_id, "walletAddress": user.wallet.address, "signature": list(self.signer.sign(str(message))), "referralCode": None},
+        )
+        self.token = str(verified.get("token") or "")
+        if not self.token:
+            raise RuntimeError("Planet Forge authVerify did not return a token")
+
+    async def _invoke(self, function: str, user: UserState, **args: object) -> dict:
+        await self._ensure_auth(user)
+        return await self._request(function, {"token": self.token, **args})
 
     @staticmethod
     def _state(payload: dict) -> GameState:
         data = payload.get("state", payload)
         if not isinstance(data, dict):
-            raise RuntimeError("external target state response must contain a JSON object")
-        known = {"score", "resources", "position", "ship", "rank", "upgrades", "cooldown_seconds", "alive", "game_over"}
+            raise RuntimeError("Planet Forge state response must contain a JSON object")
+        player = data.get("player", {}) if isinstance(data.get("player", {}), dict) else {}
+        resources = data.get("resources", data.get("materials", {}))
+        if not isinstance(resources, dict):
+            resources = {}
+        excluded = {"player", "inventory", "score", "resources", "materials", "position", "ship", "rank", "upgrades", "cooldown_seconds", "dead", "game_over"}
         return GameState(
-            score=int(data.get("score", 0)),
-            resources=dict(data.get("resources", {})),
-            position=dict(data.get("position", {})),
-            ship=str(data.get("ship", "unknown")),
-            rank=int(data.get("rank", 0)),
-            upgrades=dict(data.get("upgrades", {})),
+            score=int(data.get("score", player.get("xp", 0))),
+            resources=dict(resources),
+            position=dict(data.get("position", {})) if isinstance(data.get("position", {}), dict) else {},
+            ship=str(data.get("ship", player.get("equippedShipId", "unknown"))),
+            rank=int(data.get("rank", player.get("level", 0))),
+            upgrades=dict(data.get("upgrades", {})) if isinstance(data.get("upgrades", {}), dict) else {},
             cooldown_seconds=float(data.get("cooldown_seconds", 0.0)),
-            alive=bool(data.get("alive", True)),
+            alive=not bool(data.get("dead", False)),
             game_over=bool(data.get("game_over", False)),
-            raw={key: value for key, value in data.items() if key not in known},
+            raw={"player": player, "inventory": data.get("inventory", []), **{key: value for key, value in data.items() if key not in excluded}},
         )
 
     async def request_play_code(self, user: UserState) -> str:
-        payload = await self._request(
-            "POST",
-            self.play_code_path,
-            json={"user_id": user.telegram_user_id, "wallet_address": user.wallet.address},
-        )
-        return self._required(payload, "play_code", "code")
+        await self._ensure_auth(user)
+        return f"PLANET-FORGE-{user.wallet.address[:8]}"
 
     async def start_session(self, user: UserState, play_code: str) -> str:
-        payload = await self._request(
-            "POST",
-            self.session_path,
-            json={"user_id": user.telegram_user_id, "play_code": play_code, "wallet_address": user.wallet.address},
-        )
-        return self._required(payload, "session_id", "id")
+        state = await self._invoke("playerState", user)
+        catalog = await self._invoke("catalog", user)
+        levels = catalog.get("levels", [])
+        if not levels:
+            raise RuntimeError("Planet Forge catalog has no playable levels")
+        level = next((item for item in levels if isinstance(item, dict) and not item.get("locked")), levels[0])
+        inventory = state.get("inventory", [])
+        ships = [item for item in inventory if isinstance(item, dict) and item.get("itemKind") == "ship"]
+        player = state.get("player", {}) if isinstance(state.get("player", {}), dict) else {}
+        ship = next((item for item in ships if item.get("id") == player.get("equippedShipId")), None) or (ships[0] if ships else None)
+        if not ship:
+            raise RuntimeError("Planet Forge player has no ship inventory item")
+        run = await self._invoke("startRun", user, levelId=level.get("id"), shipInvId=ship.get("id"), defendMissionId="")
+        run_id = str(run.get("runId") or "")
+        if not run_id:
+            raise RuntimeError("Planet Forge startRun did not return runId")
+        self._runs[user.telegram_user_id] = {"run_id": run_id, "heartbeat_token": run.get("heartbeatToken"), "level_id": level.get("id"), "ship_inv_id": ship.get("id"), "started_at": time.monotonic(), "duration": float(level.get("durationSec", 90)), "kills": 0, "inputs": 0, "completed": False}
+        return run_id
 
     async def read_state(self, user: UserState) -> GameState:
-        if not user.session_id:
-            raise RuntimeError("external session is not ready; run /start first")
-        payload = await self._request("GET", self.state_path, params={"session_id": user.session_id})
+        payload = await self._invoke("playerState", user)
+        run = self._runs.get(user.telegram_user_id)
+        if run and not run["completed"] and time.monotonic() - run["started_at"] >= run["duration"]:
+            await self._complete(user, run, survived=True)
+            payload["game_over"] = True
         return self._state(payload)
 
     async def submit_action(self, user: UserState, action: ActionName) -> GameState:
-        if not user.session_id:
-            raise RuntimeError("external session is not ready; run /start first")
-        payload = await self._request("POST", self.action_path, json={"session_id": user.session_id, "action": action})
-        return self._state(payload)
+        run = self._runs.get(user.telegram_user_id)
+        if not run:
+            raise RuntimeError("Planet Forge run is not ready; run /start first")
+        if action != "wait":
+            run["inputs"] += 1
+        if action == "fire":
+            run["kills"] += 1
+        await self._invoke("runHeartbeat", user, runId=run["run_id"], heartbeatToken=run["heartbeat_token"], kills=run["kills"], inputs=run["inputs"])
+        return await self.read_state(user)
+
+    async def _complete(self, user: UserState, run: dict, survived: bool) -> dict:
+        if run["completed"]:
+            return {}
+        result = {"timeMs": int((time.monotonic() - run["started_at"]) * 1000), "kills": run["kills"], "materials": {}, "survived": survived}
+        payload = await self._invoke("completeLevel", user, levelId=run["level_id"], shipInvId=run["ship_inv_id"], runId=run["run_id"], result=result)
+        run["completed"] = True
+        return payload
 
     async def upgrade(self, user: UserState) -> GameState:
-        return await self.submit_action(user, "upgrade")
+        return await self.read_state(user)
+
+    async def equip_item(self, user: UserState, **args: object) -> dict:
+        return await self._invoke("equipItem", user, **args)
+
+    async def craft_item(self, user: UserState, **args: object) -> dict:
+        return await self._invoke("craftItem", user, **args)
+
+
+ExternalJsonGameAdapter = PlanetForgeAdapter
 
 
 @dataclass
@@ -175,13 +216,7 @@ class DemoGameAdapter(GameAdapter):
     async def start_session(self, user: UserState, play_code: str) -> str:
         session_id = f"demo-{user.telegram_user_id}"
         seed = user.telegram_user_id ^ int(hashlib.sha256(play_code.encode()).hexdigest()[:8], 16)
-        state = GameState(
-            resources={"ore": 0, "metal": 0, "fuel": 100, "upgrade_tokens": 0},
-            position={"x": 0.0, "y": 0.0},
-            ship="SCRAP-01",
-            rank=1,
-            upgrades={"mining": 1, "hull": 1},
-        )
+        state = GameState(resources={"ore": 0, "metal": 0, "fuel": 100, "upgrade_tokens": 0}, position={"x": 0.0, "y": 0.0}, ship="SCRAP-01", rank=1, upgrades={"mining": 1, "hull": 1})
         self.sessions[session_id] = _DemoSession(state=state, rng=random.Random(seed))
         return session_id
 
@@ -244,20 +279,23 @@ class DemoGameAdapter(GameAdapter):
 
 
 class SelectableGameAdapter(GameAdapter):
-    """Select demo or an external adapter from each user's persisted target."""
+    """Select demo or Planet Forge from each user's persisted target."""
 
-    def __init__(self, default_target: str, **external_options: str) -> None:
+    def __init__(self, default_target: str, signer: SolanaSigner | None = None, **external_options: str) -> None:
         self.default_target = normalize_target(default_target)
         self.demo = DemoGameAdapter()
+        self.signer = signer
         self.external_options = external_options
-        self.external: dict[str, ExternalJsonGameAdapter] = {}
+        self.external: dict[str, PlanetForgeAdapter] = {}
 
     def _adapter(self, user: UserState) -> GameAdapter:
         target = normalize_target(user.target_url or self.default_target)
         if target == "demo":
             return self.demo
+        if self.signer is None:
+            raise RuntimeError("Planet Forge mode requires SOLANA_PRIVATE_KEY")
         if target not in self.external:
-            self.external[target] = ExternalJsonGameAdapter(target, **self.external_options)
+            self.external[target] = PlanetForgeAdapter(target, signer=self.signer, **self.external_options)
         return self.external[target]
 
     async def request_play_code(self, user: UserState) -> str:
