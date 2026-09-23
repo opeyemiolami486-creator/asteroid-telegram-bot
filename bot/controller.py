@@ -56,6 +56,7 @@ class GameController:
 
     async def _run(self, user: UserState) -> None:
         waiting_for_repairs = False
+        last_repair_notice = 0.0
         try:
             while user.running:
                 if not user.session_id:
@@ -65,10 +66,13 @@ class GameController:
                         if waiting_for_repairs:
                             await self.notify(user.telegram_user_id, "Ship repairs complete; resuming the game")
                             waiting_for_repairs = False
+                            last_repair_notice = 0.0
                     except PlanetForgeShipRepairError as exc:
-                        if not waiting_for_repairs:
-                            await self.notify(user.telegram_user_id, self._repair_message(exc, "waiting and will resume automatically when ready"))
-                            waiting_for_repairs = True
+                        now = time.monotonic()
+                        if not waiting_for_repairs or now - last_repair_notice >= 30:
+                            await self.notify(user.telegram_user_id, self._repair_message(exc, "retrying automatically"))
+                            last_repair_notice = now
+                        waiting_for_repairs = True
                         reward = await self.adapter.claim_daily_reward(user)
                         if reward:
                             await self.notify(user.telegram_user_id, reward)
@@ -85,9 +89,11 @@ class GameController:
                         next_session = await self.adapter.restart_session(user)
                     except PlanetForgeShipRepairError as exc:
                         user.session_id = None
-                        if not waiting_for_repairs:
-                            await self.notify(user.telegram_user_id, self._repair_message(exc, "waiting before the next sector"))
-                            waiting_for_repairs = True
+                        now = time.monotonic()
+                        if not waiting_for_repairs or now - last_repair_notice >= 30:
+                            await self.notify(user.telegram_user_id, self._repair_message(exc, "retrying automatically before the next sector"))
+                            last_repair_notice = now
+                        waiting_for_repairs = True
                         reward = await self.adapter.claim_daily_reward(user)
                         if reward:
                             await self.notify(user.telegram_user_id, reward)

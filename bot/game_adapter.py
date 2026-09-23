@@ -361,6 +361,14 @@ class PlanetForgeAdapter(GameAdapter):
             except PlanetForgeInvalidRunError:
                 run["completed"] = True
                 return await self._restart_invalid_run(user)
+            # completeLevel credits XP/materials asynchronously on some builds;
+            # read playerState again before returning the completed state so the
+            # controller reports the rewards that were just earned.
+            try:
+                payload = await self._invoke("playerState", user)
+            except PlanetForgeInvalidRunError:
+                run["completed"] = True
+                return await self._restart_invalid_run(user)
             payload["game_over"] = True
         return self._state(payload)
 
