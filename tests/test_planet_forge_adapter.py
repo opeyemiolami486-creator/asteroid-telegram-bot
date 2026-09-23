@@ -161,6 +161,40 @@ async def test_invalid_heartbeat_restarts_run_and_keeps_tick_alive(adapter, monk
 
 
 @pytest.mark.asyncio
+async def test_invalid_state_refresh_restarts_run_instead_of_propagating(adapter, monkeypatch):
+    user = UserState(7, Wallet(adapter.signer.address, "00" * 32), play_code="pilot")
+    adapter._runs[user.telegram_user_id] = {
+        "run_id": "expired-run", "heartbeat_token": "expired-token", "level_id": "one",
+        "ship_inv_id": "ship-inv", "started_at": 9999999999.0, "duration": 90.0,
+        "kills": 0, "inputs": 0, "last_heartbeat": 0.0, "completed": False,
+    }
+    calls = []
+
+    async def invoke(function, _user, **args):
+        calls.append(function)
+        if function == "playerState" and calls.count("playerState") == 1:
+            raise PlanetForgeInvalidRunError("Planet Forge run is no longer valid")
+        return {"score": 194}
+
+    async def restart(_user, _play_code):
+        adapter._runs[user.telegram_user_id] = {
+            "run_id": "fresh-run", "heartbeat_token": "fresh-token", "level_id": "one",
+            "ship_inv_id": "ship-inv", "started_at": 9999999999.0, "duration": 90.0,
+            "kills": 0, "inputs": 0, "last_heartbeat": 0.0, "completed": False,
+        }
+        return "fresh-run"
+
+    monkeypatch.setattr(adapter, "_invoke", invoke)
+    monkeypatch.setattr(adapter, "start_session", restart)
+
+    state = await adapter.read_state(user)
+
+    assert state.score == 194
+    assert user.session_id == "fresh-run"
+    assert calls == ["playerState", "playerState"]
+
+
+@pytest.mark.asyncio
 async def test_daily_reward_is_optional_and_throttled(adapter, monkeypatch):
     user = UserState(3, Wallet(adapter.signer.address, "00" * 32))
     calls = []

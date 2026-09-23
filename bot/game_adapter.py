@@ -333,8 +333,19 @@ class PlanetForgeAdapter(GameAdapter):
         status = str(data.get("status", data.get("result", ""))).strip().lower()
         return status in {"complete", "completed", "success", "succeeded", "victory", "won"}
 
+    async def _restart_invalid_run(self, user: UserState) -> GameState:
+        """Replace an expired server run and return its fresh state."""
+        new_run_id = await self.start_session(user, user.play_code or "")
+        user.session_id = new_run_id
+        return await self.read_state(user)
+
     async def read_state(self, user: UserState) -> GameState:
-        payload = await self._invoke("playerState", user)
+        try:
+            payload = await self._invoke("playerState", user)
+        except PlanetForgeInvalidRunError:
+            # The server can invalidate a run while the canvas is still open.
+            # Treat this as a normal lifecycle transition, not a fatal error.
+            return await self._restart_invalid_run(user)
         run = self._runs.get(user.telegram_user_id)
         if run and not run["completed"] and (
             time.monotonic() - run["started_at"] >= run["duration"]
@@ -347,6 +358,9 @@ class PlanetForgeAdapter(GameAdapter):
                 # Treat that as a completed run so the controller can start a new
                 # one instead of stopping forever on an unrecoverable 500.
                 run["completed"] = True
+            except PlanetForgeInvalidRunError:
+                run["completed"] = True
+                return await self._restart_invalid_run(user)
             payload["game_over"] = True
         return self._state(payload)
 
@@ -371,9 +385,7 @@ class PlanetForgeAdapter(GameAdapter):
                 # A run can expire server-side while the bot is paused, redeployed,
                 # or between ticks.  Do not stop the user's loop for that expected
                 # lifecycle event; replace the stale run and continue from state.
-                new_run_id = await self.start_session(user, user.play_code or "")
-                user.session_id = new_run_id
-                return await self.read_state(user)
+                return await self._restart_invalid_run(user)
             run["last_heartbeat"] = now
         return await self.read_state(user)
 
@@ -385,14 +397,17 @@ class PlanetForgeAdapter(GameAdapter):
         run["kills"] += 1
         now = time.monotonic()
         if now - run["last_heartbeat"] >= 30:
-            await self._invoke(
-                "runHeartbeat",
-                user,
-                runId=run["run_id"],
-                heartbeatToken=run["heartbeat_token"],
-                kills=run["kills"],
-                inputs=run["inputs"],
-            )
+            try:
+                await self._invoke(
+                    "runHeartbeat",
+                    user,
+                    runId=run["run_id"],
+                    heartbeatToken=run["heartbeat_token"],
+                    kills=run["kills"],
+                    inputs=run["inputs"],
+                )
+            except PlanetForgeInvalidRunError:
+                return await self._restart_invalid_run(user)
             run["last_heartbeat"] = now
         return await self.read_state(user)
 
